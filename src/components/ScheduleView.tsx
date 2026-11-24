@@ -19,6 +19,7 @@ interface ScheduleViewProps {
     startTime: string;
     endTime: string;
   }) => void;
+  canCancelBooking: (booking: Booking) => boolean;
   onCancelBooking: (bookingId: string) => Promise<{ ok: boolean; error?: string }>;
 }
 
@@ -27,6 +28,7 @@ export function ScheduleView({
   bookings,
   now,
   onOpenBookingModal,
+  canCancelBooking,
   onCancelBooking,
 }: ScheduleViewProps) {
   const todayISO = formatDateISO(now);
@@ -244,7 +246,9 @@ export function ScheduleView({
                         {dur}m
                       </td>
                       <td className="py-3 px-5 text-right whitespace-nowrap">
-                        {isConfirming ? (
+                        {!canCancelBooking(b) ? (
+                          <span className="text-xs text-slate-400">Booked</span>
+                        ) : isConfirming ? (
                           <span className="inline-flex items-center gap-1.5">
                             <button
                               type="button"

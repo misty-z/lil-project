@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Bell, CalendarCheck2, CalendarX2, RefreshCw, Volume2, VolumeX } from 'lucide-react';
+import { AuthGate } from './components/AuthGate';
 import { BookingModal } from './components/BookingModal';
 import { NotificationsView } from './components/NotificationsView';
 import { RoomMonitorCard } from './components/RoomMonitorCard';
@@ -18,6 +19,12 @@ import {
 
 export default function App() {
   const {
+    user,
+    authReady,
+    isSigningIn,
+    authError,
+    signInWithGoogle,
+    signOutUser,
     rooms,
     bookings,
     notifications,
@@ -32,6 +39,7 @@ export default function App() {
     toggleSound,
     toggleDesktopAlerts,
     dismissToast,
+    canCancelBooking,
     createBooking,
     cancelBooking,
     markAllNotificationsRead,
@@ -105,6 +113,24 @@ export default function App() {
     }
   };
 
+  if (!authReady) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
+        <p className="text-sm font-medium text-slate-500">Connecting to Textile 308...</p>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <AuthGate
+        onSignIn={signInWithGoogle}
+        authError={authError}
+        isSigningIn={isSigningIn}
+      />
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 flex">
       <Sidebar
@@ -119,6 +145,8 @@ export default function App() {
         connectionState={connectionState}
         availableRoomCount={availableRoomCount}
         totalRoomCount={rooms.length}
+        userName={user.displayName || user.email}
+        onSignOut={signOutUser}
         mobileOpen={mobileNavOpen}
         onCloseMobile={() => setMobileNavOpen(false)}
       />
@@ -238,6 +266,7 @@ export default function App() {
                         allBookings={bookings}
                         now={now}
                         onOpenBookingModal={openPrefilledBookingModal}
+                        canCancelBooking={canCancelBooking}
                         onCancelBooking={cancelBooking}
                       />
                     ))}
@@ -332,6 +361,7 @@ export default function App() {
                   bookings={bookings}
                   now={now}
                   onOpenBookingModal={openPrefilledBookingModal}
+                  canCancelBooking={canCancelBooking}
                   onCancelBooking={cancelBooking}
                 />
               )}
@@ -367,6 +397,7 @@ export default function App() {
         bookings={bookings}
         now={now}
         initialValues={modalInitialValues}
+        defaultOrganizer={user.displayName || ''}
         onClose={() => setModalOpen(false)}
         onSubmit={createBooking}
       />

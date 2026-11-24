@@ -6,8 +6,10 @@ import {
   doIntervalsOverlap,
   findNextAvailableSlot,
   formatDateISO,
+  formatRoomCapacity,
   minutesToTime,
   parseTimeToMinutes,
+  ROOMS,
   validateBookingInput,
 } from './bookingRules';
 import type { Booking } from '../types/room';
@@ -180,4 +182,45 @@ test('createInitialSeedBookings produces non-overlapping valid bookings even lat
       assert.equal(check.valid, true, `Seed booking ${seeds[i].id} invalid at hour ${hour}: ${check.error}`);
     }
   }
+});
+
+test('validateBookingInput enforces blueprint max lengths and time format', () => {
+  const overTitle = validateBookingInput(
+    {
+      roomId: 'main-meeting',
+      title: 'A'.repeat(81),
+      organizer: 'Alex',
+      date: '2026-11-23',
+      startTime: '10:00',
+      endTime: '10:30',
+    },
+    []
+  );
+  assert.equal(overTitle.valid, false);
+  assert.ok(overTitle.fieldErrors?.title);
+
+  const overNotes = validateBookingInput(
+    {
+      roomId: 'main-meeting',
+      title: 'Sync',
+      organizer: 'Alex',
+      date: '2026-11-23',
+      startTime: '10:00',
+      endTime: '10:30',
+      notes: 'N'.repeat(201),
+    },
+    []
+  );
+  assert.equal(overNotes.valid, false);
+  assert.ok(overNotes.fieldErrors?.notes);
+});
+
+test('Director Room has max 4 seats and formats capacity cleanly', () => {
+  const mainRoom = ROOMS.find((r) => r.id === 'main-meeting');
+  const directorRoom = ROOMS.find((r) => r.id === 'director-room');
+  assert.ok(mainRoom && directorRoom);
+  assert.equal(mainRoom.capacity, 10);
+  assert.equal(directorRoom.capacity, 4);
+  assert.equal(formatRoomCapacity(mainRoom), '10 seats');
+  assert.equal(formatRoomCapacity(directorRoom), 'Max 4 seats');
 });

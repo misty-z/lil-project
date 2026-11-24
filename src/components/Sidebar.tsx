@@ -1,4 +1,4 @@
-import { Bell, Building2, CalendarDays, LayoutGrid, X } from 'lucide-react';
+import { Bell, Building2, CalendarDays, LayoutGrid, LogOut, X } from 'lucide-react';
 import type { ConnectionState } from '../hooks/useRoomMonitor';
 
 export type NavView = 'monitor' | 'schedule' | 'notifications' | 'rooms';
@@ -10,6 +10,8 @@ interface SidebarProps {
   connectionState: ConnectionState;
   availableRoomCount: number;
   totalRoomCount: number;
+  userName?: string | null;
+  onSignOut?: () => void;
   mobileOpen: boolean;
   onCloseMobile: () => void;
 }
@@ -32,6 +34,8 @@ export function Sidebar({
   connectionState,
   availableRoomCount,
   totalRoomCount,
+  userName,
+  onSignOut,
   mobileOpen,
   onCloseMobile,
 }: SidebarProps) {
@@ -48,7 +52,7 @@ export function Sidebar({
             }}
             className="text-lg font-bold tracking-tight text-slate-900 whitespace-nowrap shrink-0"
           >
-            Meridian Rooms
+            Textile 308
           </a>
           <button
             type="button"
@@ -106,7 +110,7 @@ export function Sidebar({
           </span>
         </div>
         <div className="flex items-center justify-between text-xs text-slate-500">
-          <span>Live Feed</span>
+          <span>Database</span>
           <span className="inline-flex items-center gap-1.5 font-medium text-slate-700">
             <span
               className={`h-2 w-2 rounded-full ${
@@ -120,13 +124,30 @@ export function Sidebar({
             />
             <span>
               {connectionState === 'connected'
-                ? 'Synced'
+                ? 'Cloud Synced'
                 : connectionState === 'reconnecting'
                   ? 'Reconnecting'
                   : 'Connecting'}
             </span>
           </span>
         </div>
+
+        {userName && onSignOut && (
+          <div className="pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
+            <span className="text-xs font-medium text-slate-700 truncate">
+              {userName}
+            </span>
+            <button
+              type="button"
+              onClick={onSignOut}
+              aria-label="Sign out"
+              className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-colors shrink-0"
+            >
+              <LogOut className="h-3.5 w-3.5" />
+              <span>Sign out</span>
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

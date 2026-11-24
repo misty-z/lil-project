@@ -3,6 +3,7 @@ import { AlertCircle, X } from 'lucide-react';
 import type { Booking, CreateBookingInput, Room, RoomId } from '../types/room';
 import {
   findNextAvailableSlot,
+  formatRoomCapacity,
   minutesToTime,
   parseTimeToMinutes,
   validateBookingInput,
@@ -19,6 +20,7 @@ interface BookingModalProps {
     startTime: string;
     endTime: string;
   };
+  defaultOrganizer?: string;
   onClose: () => void;
   onSubmit: (
     input: CreateBookingInput
@@ -33,6 +35,7 @@ export function BookingModal({
   bookings,
   now,
   initialValues,
+  defaultOrganizer = '',
   onClose,
   onSubmit,
 }: BookingModalProps) {
@@ -54,13 +57,13 @@ export function BookingModal({
       setStartTime(initialValues.startTime);
       setEndTime(initialValues.endTime);
       setTitle('');
-      setOrganizer('');
+      setOrganizer(defaultOrganizer);
       setNotes('');
       setErrorMsg(null);
       setFieldErrors({});
       setIsSubmitting(false);
     }
-  }, [isOpen, initialValues]);
+  }, [isOpen, initialValues, defaultOrganizer]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -200,7 +203,7 @@ export function BookingModal({
                   >
                     <p className="text-sm font-semibold truncate">{r.name}</p>
                     <p className="mt-0.5 text-xs text-slate-500 font-mono tabular-nums">
-                      {r.capacity} seats
+                      {formatRoomCapacity(r)}
                     </p>
                   </button>
                 );

@@ -1,12 +1,43 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  onAuthStateChanged,
+  signInWithPopup,
+  signOut,
+  type User,
+} from 'firebase/auth';
+import {
+  collection,
+  doc,
+  getDoc,
+  onSnapshot,
+  query,
+  serverTimestamp,
+  Timestamp,
+  where,
+  writeBatch,
+} from 'firebase/firestore';
+import firebaseConfig from '../../firebase-applet-config.json';
+import {
+  auth,
+  db,
+  googleProvider,
+  handleFirestoreError,
+  OperationType,
+} from '../firebase';
 import type {
   Booking,
   CreateBookingInput,
   NotificationEvent,
   Room,
-  WsServerMessage,
+  RoomId,
 } from '../types/room';
-import { ROOMS, sortBookingsByTime } from '../utils/bookingRules';
+import {
+  createInitialSeedBookings,
+  ROOM_MAP,
+  ROOMS,
+  sortBookingsByTime,
+  validateBookingInput,
+} from '../utils/bookingRules';
 
 export type ConnectionState = 'connecting' | 'connected' | 'reconnecting';
 
@@ -14,6 +45,8 @@ export interface ToastNotification {
   id: string;
   event: NotificationEvent;
 }
+
+const ADMIN_EMAIL = 'malif0313@gmail.com';
 
 function playNotificationTone(type: NotificationEvent['type']): void {
   try {
@@ -31,12 +64,12 @@ function playNotificationTone(type: NotificationEvent['type']): void {
 
     if (type === 'booking:created') {
       osc.type = 'sine';
-      osc.frequency.setValueAtTime(587.33, now); // D5
-      osc.frequency.setValueAtTime(880, now + 0.09); // A5
+      osc.frequency.setValueAtTime(587.33, now);
+      osc.frequency.setValueAtTime(880, now + 0.09);
     } else {
       osc.type = 'sine';
-      osc.frequency.setValueAtTime(523.25, now); // C5
-      osc.frequency.setValueAtTime(392, now + 0.09); // G4
+      osc.frequency.setValueAtTime(523.25, now);
+      osc.frequency.setValueAtTime(392, now + 0.09);
     }
 
     gain.gain.setValueAtTime(0.001, now);
@@ -53,10 +86,40 @@ function playNotificationTone(type: NotificationEvent['type']): void {
   }
 }
 
+function timestampToISO(val: unknown): string {
+  if (val instanceof Timestamp) {
+    return val.toDate().toISOString();
+  }
+  if (typeof val === 'string') return val;
+  return new Date().toISOString();
+}
+
+function formatQuotaMessage(err: unknown): string | null {
+  const msg = err instanceof Error ? err.message : String(err);
+  if (
+    msg.includes("Quota exceeded for quota metric 'Free daily read units per project (free tier database)'")
+  ) {
+    const upgradeUrl = `https://console.firebase.google.com/project/${firebaseConfig.projectId}/firestore/databases/${firebaseConfig.firestoreDatabaseId}/data?openUpgradeDialog=true`;
+    return `Firestore free daily read quota exceeded. It resets tomorrow, or you can view database usage at ${upgradeUrl}`;
+  }
+  if (msg.includes('Quota exceeded')) {
+    return 'Firestore free tier daily quota exceeded. Quota resets tomorrow (see Spark plan limits at https://firebase.google.com/pricing#cloud-firestore).';
+  }
+  return null;
+}
+
 export function useRoomMonitor() {
-  const [rooms, setRooms] = useState<Room[]>(ROOMS);
+  const [rooms] = useState<Room[]>(ROOMS);
+  const [user, setUser] = useState<User | null>(null);
+  const [authReady, setAuthReady] = useState<boolean>(false);
+  const [isSigningIn, setIsSigningIn] = useState<boolean>(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+
   const [bookings, setBookings] = useState<Booking[]>([]);
-  const [notifications, setNotifications] = useState<NotificationEvent[]>([]);
+  const [rawNotifications, setRawNotifications] = useState<
+    Omit<NotificationEvent, 'read'>[]
+  >([]);
+  const [lastReadMs, setLastReadMs] = useState<number>(0);
   const [toasts, setToasts] = useState<ToastNotification[]>([]);
   const [connectionState, setConnectionState] = useState<ConnectionState>('connecting');
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -88,13 +151,58 @@ export function useRoomMonitor() {
   const desktopRef = useRef(desktopAlertsEnabled);
   desktopRef.current = desktopAlertsEnabled;
   const seenNotificationIds = useRef<Set<string>>(new Set());
+  const initialNotifLoaded = useRef<boolean>(false);
 
-  // Live clock tick every 15s (and exact minute updates)
+  // Live clock tick every 15s
   useEffect(() => {
     const timer = window.setInterval(() => {
       setNow(new Date());
     }, 15_000);
     return () => window.clearInterval(timer);
+  }, []);
+
+  // Auth listener
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+      setAuthReady(true);
+      if (currentUser) {
+        try {
+          const saved = Number(
+            localStorage.getItem(`meridian_last_read_${currentUser.uid}`) || '0'
+          );
+          setLastReadMs(Number.isFinite(saved) ? saved : 0);
+        } catch {
+          setLastReadMs(0);
+        }
+      } else {
+        setBookings([]);
+        setRawNotifications([]);
+        seenNotificationIds.current.clear();
+        initialNotifLoaded.current = false;
+        setIsLoading(false);
+      }
+    });
+    return () => unsub();
+  }, []);
+
+  const signInWithGoogle = useCallback(async () => {
+    setIsSigningIn(true);
+    setAuthError(null);
+    try {
+      await signInWithPopup(auth, googleProvider);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Google sign-in failed.';
+      if (!msg.includes('popup-closed-by-user')) {
+        setAuthError(msg);
+      }
+    } finally {
+      setIsSigningIn(false);
+    }
+  }, []);
+
+  const signOutUser = useCallback(async () => {
+    await signOut(auth);
   }, []);
 
   const toggleSound = useCallback(() => {
@@ -147,15 +255,7 @@ export function useRoomMonitor() {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
-  const pushIncomingNotification = useCallback((event: NotificationEvent) => {
-    if (seenNotificationIds.current.has(event.id)) return;
-    seenNotificationIds.current.add(event.id);
-
-    setNotifications((prev) => {
-      if (prev.some((n) => n.id === event.id)) return prev;
-      return [event, ...prev].slice(0, 100);
-    });
-
+  const triggerLiveAlert = useCallback((event: NotificationEvent) => {
     setToasts((prev) => {
       if (prev.some((t) => t.id === event.id)) return prev;
       return [{ id: event.id, event }, ...prev].slice(0, 4);
@@ -181,185 +281,363 @@ export function useRoomMonitor() {
     }
   }, []);
 
-  const fetchInitialState = useCallback(async () => {
+  // One-time initial seed when signed in and appMeta/seed doesn't exist yet
+  const ensureInitialSeed = useCallback(async (currentUser: User) => {
+    const seedRef = doc(db, 'appMeta', 'seed');
     try {
-      const res = await fetch('/api/state');
-      if (!res.ok) throw new Error(`Server returned ${res.status}`);
-      const data = (await res.json()) as {
-        rooms: Room[];
-        bookings: Booking[];
-        notifications: NotificationEvent[];
-      };
-      setRooms(data.rooms);
-      setBookings(sortBookingsByTime(data.bookings));
-      for (const n of data.notifications) {
-        seenNotificationIds.current.add(n.id);
+      const seedSnap = await getDoc(seedRef);
+      if (seedSnap.exists()) return;
+
+      const seeds = createInitialSeedBookings(new Date());
+      const batch = writeBatch(db);
+
+      for (const b of seeds) {
+        const bookingRef = doc(db, 'bookings', b.id);
+        batch.set(bookingRef, {
+          roomId: b.roomId,
+          title: b.title,
+          organizer: b.organizer,
+          date: b.date,
+          startTime: b.startTime,
+          endTime: b.endTime,
+          ...(b.notes ? { notes: b.notes } : {}),
+          createdByUid: currentUser.uid,
+          createdAt: serverTimestamp(),
+        });
+
+        const notifRef = doc(db, 'notifications', `${b.id}_created`);
+        batch.set(notifRef, {
+          type: 'booking:created',
+          roomId: b.roomId,
+          roomName: ROOM_MAP[b.roomId].name,
+          bookingId: b.id,
+          title: b.title,
+          organizer: b.organizer,
+          date: b.date,
+          startTime: b.startTime,
+          endTime: b.endTime,
+          actorUid: currentUser.uid,
+          timestamp: serverTimestamp(),
+        });
       }
-      setNotifications(data.notifications);
-      setLoadError(null);
+
+      batch.set(seedRef, {
+        seeded: true,
+        seededByUid: currentUser.uid,
+        seededAt: serverTimestamp(),
+      });
+
+      await batch.commit();
     } catch (err) {
-      setLoadError(err instanceof Error ? err.message : 'Failed to load room schedule.');
-    } finally {
-      setIsLoading(false);
+      const quotaMsg = formatQuotaMessage(err);
+      if (quotaMsg) {
+        setLoadError(quotaMsg);
+        return;
+      }
+      // If another user seeded concurrently, ignore already-exists; otherwise report
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes('Missing or insufficient permissions')) {
+        handleFirestoreError(err, OperationType.WRITE, 'appMeta/seed');
+      }
     }
   }, []);
 
-  // Fetch initial state + connect WebSocket with reconnect
+  // Attach real-time Firestore listeners only when authReady && user
   useEffect(() => {
-    fetchInitialState();
+    if (!authReady || !user) return;
 
-    let ws: WebSocket | null = null;
-    let reconnectTimer: number | null = null;
-    let disposed = false;
-    let attempt = 0;
+    setIsLoading(true);
+    setLoadError(null);
+    setConnectionState('connecting');
+    initialNotifLoaded.current = false;
+    seenNotificationIds.current.clear();
 
-    function connect() {
-      if (disposed) return;
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${protocol}//${window.location.host}/ws`;
-      setConnectionState(attempt === 0 ? 'connecting' : 'reconnecting');
+    void ensureInitialSeed(user);
 
-      ws = new WebSocket(wsUrl);
+    const bookingsPath = 'bookings';
+    const bookingsQuery = query(
+      collection(db, bookingsPath),
+      where('roomId', 'in', ['main-meeting', 'director-room'])
+    );
 
-      ws.onopen = () => {
-        attempt = 0;
+    const unsubBookings = onSnapshot(
+      bookingsQuery,
+      (snapshot) => {
+        const items: Booking[] = snapshot.docs.map((d) => {
+          const data = d.data();
+          return {
+            id: d.id,
+            roomId: data.roomId as RoomId,
+            title: String(data.title ?? ''),
+            organizer: String(data.organizer ?? ''),
+            date: String(data.date ?? ''),
+            startTime: String(data.startTime ?? ''),
+            endTime: String(data.endTime ?? ''),
+            notes: typeof data.notes === 'string' ? data.notes : undefined,
+            createdByUid:
+              typeof data.createdByUid === 'string' ? data.createdByUid : undefined,
+            createdAt: timestampToISO(data.createdAt),
+          };
+        });
+        setBookings(sortBookingsByTime(items));
         setConnectionState('connected');
-      };
-
-      ws.onmessage = (msgEvent) => {
-        try {
-          const msg = JSON.parse(String(msgEvent.data)) as WsServerMessage;
-          if (msg.type === 'init') {
-            setRooms(msg.rooms);
-            setBookings(sortBookingsByTime(msg.bookings));
-            for (const n of msg.notifications) {
-              seenNotificationIds.current.add(n.id);
-            }
-            setNotifications(msg.notifications);
-            setIsLoading(false);
-            setLoadError(null);
-          } else if (msg.type === 'booking:created') {
-            setBookings((prev) => {
-              if (prev.some((b) => b.id === msg.booking.id)) return prev;
-              return sortBookingsByTime([...prev, msg.booking]);
-            });
-            pushIncomingNotification(msg.notification);
-          } else if (msg.type === 'booking:cancelled') {
-            setBookings((prev) => prev.filter((b) => b.id !== msg.bookingId));
-            pushIncomingNotification(msg.notification);
-          } else if (msg.type === 'notifications:read') {
-            setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
-          } else if (msg.type === 'notifications:cleared') {
-            setNotifications([]);
-          }
-        } catch {
-          // Ignore malformed message
+        setIsLoading(false);
+        setLoadError(null);
+      },
+      (error) => {
+        const quotaMsg = formatQuotaMessage(error);
+        if (quotaMsg) {
+          setLoadError(quotaMsg);
+          setIsLoading(false);
+          return;
         }
-      };
-
-      ws.onclose = () => {
-        if (disposed) return;
         setConnectionState('reconnecting');
-        attempt += 1;
-        const delay = Math.min(8000, 1000 * Math.pow(1.5, Math.min(attempt, 5)));
-        reconnectTimer = window.setTimeout(connect, delay);
-      };
+        handleFirestoreError(error, OperationType.LIST, bookingsPath);
+      }
+    );
 
-      ws.onerror = () => {
-        ws?.close();
-      };
-    }
+    const notificationsPath = 'notifications';
+    const notificationsQuery = query(
+      collection(db, notificationsPath),
+      where('roomId', 'in', ['main-meeting', 'director-room'])
+    );
 
-    connect();
+    const unsubNotifications = onSnapshot(
+      notificationsQuery,
+      (snapshot) => {
+        const list = snapshot.docs
+          .map((d) => {
+            const data = d.data();
+            return {
+              id: d.id,
+              type: data.type as NotificationEvent['type'],
+              roomId: data.roomId as RoomId,
+              roomName: String(data.roomName ?? ''),
+              bookingId: String(data.bookingId ?? ''),
+              title: String(data.title ?? ''),
+              organizer: String(data.organizer ?? ''),
+              date: String(data.date ?? ''),
+              startTime: String(data.startTime ?? ''),
+              endTime: String(data.endTime ?? ''),
+              actorUid: typeof data.actorUid === 'string' ? data.actorUid : undefined,
+              timestamp: timestampToISO(data.timestamp),
+            };
+          })
+          .sort((a, b) => b.timestamp.localeCompare(a.timestamp))
+          .slice(0, 100);
+
+        if (!initialNotifLoaded.current) {
+          for (const item of list) {
+            seenNotificationIds.current.add(item.id);
+          }
+          initialNotifLoaded.current = true;
+        } else {
+          for (const item of list) {
+            if (!seenNotificationIds.current.has(item.id)) {
+              seenNotificationIds.current.add(item.id);
+              triggerLiveAlert({ ...item, read: false });
+            }
+          }
+        }
+
+        setRawNotifications(list);
+      },
+      (error) => {
+        const quotaMsg = formatQuotaMessage(error);
+        if (quotaMsg) {
+          setLoadError(quotaMsg);
+          return;
+        }
+        handleFirestoreError(error, OperationType.LIST, notificationsPath);
+      }
+    );
 
     return () => {
-      disposed = true;
-      if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
-      ws?.close();
+      unsubBookings();
+      unsubNotifications();
     };
-  }, [fetchInitialState, pushIncomingNotification]);
+  }, [authReady, user, ensureInitialSeed, triggerLiveAlert]);
+
+  const notifications: NotificationEvent[] = useMemo(() => {
+    return rawNotifications.map((n) => ({
+      ...n,
+      read: new Date(n.timestamp).getTime() <= lastReadMs,
+    }));
+  }, [rawNotifications, lastReadMs]);
+
+  const unreadCount = useMemo(
+    () => notifications.filter((n) => !n.read).length,
+    [notifications]
+  );
+
+  const canCancelBooking = useCallback(
+    (booking: Booking): boolean => {
+      if (!user) return false;
+      if (user.email === ADMIN_EMAIL) return true;
+      return booking.createdByUid === user.uid;
+    },
+    [user]
+  );
 
   const createBooking = useCallback(
     async (
       input: CreateBookingInput
     ): Promise<{ ok: boolean; error?: string; booking?: Booking }> => {
+      if (!user) {
+        return { ok: false, error: 'Please sign in to book a room.' };
+      }
+
+      const check = validateBookingInput(input, bookings);
+      if (!check.valid) {
+        return { ok: false, error: check.error || 'Invalid booking details.' };
+      }
+
+      const bookingId = crypto.randomUUID();
+      const notificationId = `${bookingId}_created`;
+      const trimmedNotes = input.notes?.trim();
+
+      const batch = writeBatch(db);
+      const bookingRef = doc(db, 'bookings', bookingId);
+      const notifRef = doc(db, 'notifications', notificationId);
+
+      batch.set(bookingRef, {
+        roomId: input.roomId,
+        title: input.title.trim(),
+        organizer: input.organizer.trim(),
+        date: input.date.trim(),
+        startTime: input.startTime.trim(),
+        endTime: input.endTime.trim(),
+        ...(trimmedNotes ? { notes: trimmedNotes } : {}),
+        createdByUid: user.uid,
+        createdAt: serverTimestamp(),
+      });
+
+      batch.set(notifRef, {
+        type: 'booking:created',
+        roomId: input.roomId,
+        roomName: ROOM_MAP[input.roomId].name,
+        bookingId,
+        title: input.title.trim(),
+        organizer: input.organizer.trim(),
+        date: input.date.trim(),
+        startTime: input.startTime.trim(),
+        endTime: input.endTime.trim(),
+        actorUid: user.uid,
+        timestamp: serverTimestamp(),
+      });
+
       try {
-        const res = await fetch('/api/bookings', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(input),
-        });
-        const data = (await res.json()) as {
-          booking?: Booking;
-          notification?: NotificationEvent;
-          error?: string;
+        await batch.commit();
+        return {
+          ok: true,
+          booking: {
+            id: bookingId,
+            roomId: input.roomId,
+            title: input.title.trim(),
+            organizer: input.organizer.trim(),
+            date: input.date.trim(),
+            startTime: input.startTime.trim(),
+            endTime: input.endTime.trim(),
+            notes: trimmedNotes || undefined,
+            createdByUid: user.uid,
+            createdAt: new Date().toISOString(),
+          },
         };
-        if (!res.ok || !data.booking) {
-          return { ok: false, error: data.error || 'Could not create booking.' };
-        }
-        // Idempotent state update in case HTTP response arrives ahead of WS broadcast
-        setBookings((prev) => {
-          if (prev.some((b) => b.id === data.booking!.id)) return prev;
-          return sortBookingsByTime([...prev, data.booking!]);
-        });
-        if (data.notification) {
-          pushIncomingNotification(data.notification);
-        }
-        return { ok: true, booking: data.booking };
-      } catch {
-        return { ok: false, error: 'Network error while creating booking.' };
+      } catch (err) {
+        const quotaMsg = formatQuotaMessage(err);
+        if (quotaMsg) return { ok: false, error: quotaMsg };
+        handleFirestoreError(err, OperationType.WRITE, `bookings/${bookingId}`);
       }
     },
-    [pushIncomingNotification]
+    [user, bookings]
   );
 
   const cancelBooking = useCallback(
     async (bookingId: string): Promise<{ ok: boolean; error?: string }> => {
+      if (!user) {
+        return { ok: false, error: 'Please sign in to cancel a booking.' };
+      }
+
+      const target = bookings.find((b) => b.id === bookingId);
+      if (!target) {
+        return { ok: false, error: 'Booking not found.' };
+      }
+
+      const notificationId = `${bookingId}_cancelled`;
+      const batch = writeBatch(db);
+      batch.delete(doc(db, 'bookings', bookingId));
+      batch.set(doc(db, 'notifications', notificationId), {
+        type: 'booking:cancelled',
+        roomId: target.roomId,
+        roomName: ROOM_MAP[target.roomId].name,
+        bookingId: target.id,
+        title: target.title,
+        organizer: target.organizer,
+        date: target.date,
+        startTime: target.startTime,
+        endTime: target.endTime,
+        actorUid: user.uid,
+        timestamp: serverTimestamp(),
+      });
+
       try {
-        const res = await fetch(`/api/bookings/${encodeURIComponent(bookingId)}`, {
-          method: 'DELETE',
-        });
-        const data = (await res.json()) as {
-          bookingId?: string;
-          notification?: NotificationEvent;
-          error?: string;
-        };
-        if (!res.ok) {
-          return { ok: false, error: data.error || 'Could not cancel booking.' };
-        }
-        setBookings((prev) => prev.filter((b) => b.id !== bookingId));
-        if (data.notification) {
-          pushIncomingNotification(data.notification);
-        }
+        await batch.commit();
         return { ok: true };
-      } catch {
-        return { ok: false, error: 'Network error while cancelling booking.' };
+      } catch (err) {
+        const quotaMsg = formatQuotaMessage(err);
+        if (quotaMsg) return { ok: false, error: quotaMsg };
+        handleFirestoreError(err, OperationType.DELETE, `bookings/${bookingId}`);
       }
     },
-    [pushIncomingNotification]
+    [user, bookings]
   );
 
-  const markAllNotificationsRead = useCallback(async () => {
-    setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
-    try {
-      await fetch('/api/notifications/read', { method: 'POST' });
-    } catch {
-      // Ignore transient network failure
+  const markAllNotificationsRead = useCallback(() => {
+    const nowTs = Date.now();
+    setLastReadMs(nowTs);
+    if (user) {
+      try {
+        localStorage.setItem(`meridian_last_read_${user.uid}`, String(nowTs));
+      } catch {
+        // Ignore storage errors
+      }
     }
-  }, []);
+  }, [user]);
 
   const clearAllNotifications = useCallback(async () => {
-    setNotifications([]);
-    try {
-      await fetch('/api/notifications', { method: 'DELETE' });
-    } catch {
-      // Ignore transient network failure
+    if (!user) return;
+    const deletable = rawNotifications.filter(
+      (n) => user.email === ADMIN_EMAIL || n.actorUid === user.uid
+    );
+    if (deletable.length === 0) return;
+
+    const batch = writeBatch(db);
+    for (const item of deletable) {
+      batch.delete(doc(db, 'notifications', item.id));
     }
+    try {
+      await batch.commit();
+    } catch (err) {
+      const quotaMsg = formatQuotaMessage(err);
+      if (quotaMsg) {
+        setLoadError(quotaMsg);
+        return;
+      }
+      handleFirestoreError(err, OperationType.DELETE, 'notifications');
+    }
+  }, [user, rawNotifications]);
+
+  const retryLoad = useCallback(() => {
+    window.location.reload();
   }, []);
 
-  const unreadCount = notifications.filter((n) => !n.read).length;
-
   return {
+    user,
+    authReady,
+    isSigningIn,
+    authError,
+    signInWithGoogle,
+    signOutUser,
     rooms,
     bookings,
     notifications,
@@ -374,10 +652,11 @@ export function useRoomMonitor() {
     toggleSound,
     toggleDesktopAlerts,
     dismissToast,
+    canCancelBooking,
     createBooking,
     cancelBooking,
     markAllNotificationsRead,
     clearAllNotifications,
-    retryLoad: fetchInitialState,
+    retryLoad,
   };
 }

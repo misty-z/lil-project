@@ -253,7 +253,7 @@ async function startServer() {
   }
 
   httpServer.listen(PORT, '0.0.0.0', () => {
-    console.log(`Meridian Rooms server listening on http://0.0.0.0:${PORT}`);
+    console.log(`Textile 308 server listening on http://0.0.0.0:${PORT}`);
   });
 }
 

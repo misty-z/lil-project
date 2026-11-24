@@ -1,0 +1,224 @@
+{
+  "entities": {
+    "Booking": {
+      "title": "Booking",
+      "description": "A scheduled meeting room reservation for Main Meeting Room or Director's Room.",
+      "type": "object",
+      "properties": {
+        "roomId": {
+          "type": "string",
+          "enum": ["main-meeting", "director-room"],
+          "description": "Identifier of the reserved office room."
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "description": "Meeting title."
+        },
+        "organizer": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60,
+          "description": "Display name of the meeting organizer."
+        },
+        "date": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 10,
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+          "description": "Booking date in YYYY-MM-DD format."
+        },
+        "startTime": {
+          "type": "string",
+          "minLength": 5,
+          "maxLength": 5,
+          "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+          "description": "Start time in 24-hour HH:MM format."
+        },
+        "endTime": {
+          "type": "string",
+          "minLength": 5,
+          "maxLength": 5,
+          "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+          "description": "End time in 24-hour HH:MM format."
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 200,
+          "description": "Optional meeting agenda or AV notes."
+        },
+        "createdByUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID of the user who created the booking."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the booking was created."
+        }
+      },
+      "required": [
+        "roomId",
+        "title",
+        "organizer",
+        "date",
+        "startTime",
+        "endTime",
+        "createdByUid",
+        "createdAt"
+      ]
+    },
+    "RoomNotification": {
+      "title": "RoomNotification",
+      "description": "Real-time booking or cancellation notification event.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["booking:created", "booking:cancelled"],
+          "description": "Notification event kind."
+        },
+        "roomId": {
+          "type": "string",
+          "enum": ["main-meeting", "director-room"],
+          "description": "Room identifier associated with the event."
+        },
+        "roomName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40,
+          "description": "Human-readable room name."
+        },
+        "bookingId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Associated booking document ID."
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "description": "Meeting title."
+        },
+        "organizer": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60,
+          "description": "Organizer name."
+        },
+        "date": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 10,
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+          "description": "Booking date in YYYY-MM-DD format."
+        },
+        "startTime": {
+          "type": "string",
+          "minLength": 5,
+          "maxLength": 5,
+          "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+          "description": "Start time in 24-hour HH:MM format."
+        },
+        "endTime": {
+          "type": "string",
+          "minLength": 5,
+          "maxLength": 5,
+          "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+          "description": "End time in 24-hour HH:MM format."
+        },
+        "actorUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID of the user who triggered the event."
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of the notification."
+        }
+      },
+      "required": [
+        "type",
+        "roomId",
+        "roomName",
+        "bookingId",
+        "title",
+        "organizer",
+        "date",
+        "startTime",
+        "endTime",
+        "actorUid",
+        "timestamp"
+      ]
+    },
+    "AppSeedMeta": {
+      "title": "AppSeedMeta",
+      "description": "Tracks one-time office seed initialization status.",
+      "type": "object",
+      "properties": {
+        "seeded": {
+          "type": "boolean",
+          "description": "True once initial demo bookings are seeded."
+        },
+        "seededByUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "UID of the first authenticated user that seeded the office state."
+        },
+        "seededAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of initial seed."
+        }
+      },
+      "required": ["seeded", "seededByUid", "seededAt"]
+    },
+    "AdminMember": {
+      "title": "AdminMember",
+      "description": "Trusted office administrator role marker.",
+      "type": "object",
+      "properties": {
+        "role": {
+          "type": "string",
+          "enum": ["admin"],
+          "description": "Admin role literal."
+        },
+        "assignedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when admin role was granted."
+        }
+      },
+      "required": ["role", "assignedAt"]
+    }
+  },
+  "firestore": {
+    "/bookings/{bookingId}": {
+      "schema": { "$ref": "#/entities/Booking" },
+      "description": "Office room bookings for Main Meeting Room and Director's Room."
+    },
+    "/notifications/{notificationId}": {
+      "schema": { "$ref": "#/entities/RoomNotification" },
+      "description": "Real-time booking and cancellation notification events."
+    },
+    "/appMeta/{metaId}": {
+      "schema": { "$ref": "#/entities/AppSeedMeta" },
+      "description": "One-time initialization metadata."
+    },
+    "/admins/{userId}": {
+      "schema": { "$ref": "#/entities/AdminMember" },
+      "description": "Admin role registry."
+    }
+  }
+}

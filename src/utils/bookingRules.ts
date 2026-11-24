@@ -22,14 +22,20 @@ export const ROOMS: Room[] = [
     id: 'director-room',
     name: "Director's Room",
     shortName: "Director's Room",
-    capacity: 6,
+    capacity: 4,
     location: 'Floor 2 · Executive Suite',
     amenities: ['Executive Audio', 'Acoustic Privacy', 'Wireless Casting', 'Walnut Table'],
     description:
-      'Private executive boardroom reserved for leadership reviews, confidential 1-on-1s, and strategic briefings.',
+      'Private executive boardroom (max 4 seats) reserved for leadership reviews, confidential 1-on-1s, and strategic briefings.',
     imageUrl: '/src/assets/images/director_meeting_room_1795489639541.jpg',
   },
 ];
+
+export function formatRoomCapacity(room: Room): string {
+  return room.id === 'director-room'
+    ? `Max ${room.capacity} seats`
+    : `${room.capacity} seats`;
+}
 
 export const ROOM_MAP: Record<RoomId, Room> = {
   'main-meeting': ROOMS[0],
@@ -93,6 +99,12 @@ export interface BookingValidationResult {
   fieldErrors?: Record<string, string>;
 }
 
+export const TITLE_MAX_LENGTH = 80;
+export const ORGANIZER_MAX_LENGTH = 60;
+export const NOTES_MAX_LENGTH = 200;
+export const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+export const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
+
 export function validateBookingInput(
   input: CreateBookingInput,
   existingBookings: Booking[]
@@ -106,23 +118,30 @@ export function validateBookingInput(
   const title = (input.title ?? '').trim();
   if (!title) {
     fieldErrors.title = 'Meeting title is required.';
-  } else if (title.length > 80) {
-    fieldErrors.title = 'Meeting title must be 80 characters or fewer.';
+  } else if (title.length > TITLE_MAX_LENGTH) {
+    fieldErrors.title = `Meeting title must be ${TITLE_MAX_LENGTH} characters or fewer.`;
   }
 
   const organizer = (input.organizer ?? '').trim();
   if (!organizer) {
     fieldErrors.organizer = 'Organizer name is required.';
-  } else if (organizer.length > 60) {
-    fieldErrors.organizer = 'Organizer name must be 60 characters or fewer.';
+  } else if (organizer.length > ORGANIZER_MAX_LENGTH) {
+    fieldErrors.organizer = `Organizer name must be ${ORGANIZER_MAX_LENGTH} characters or fewer.`;
   }
 
-  if (!/^\d{4}-\d{2}-\d{2}$/.test((input.date ?? '').trim())) {
+  if (!DATE_PATTERN.test((input.date ?? '').trim())) {
     fieldErrors.date = 'Valid date (YYYY-MM-DD) is required.';
   }
 
-  const startMin = parseTimeToMinutes(input.startTime);
-  const endMin = parseTimeToMinutes(input.endTime);
+  const notes = (input.notes ?? '').trim();
+  if (notes.length > NOTES_MAX_LENGTH) {
+    fieldErrors.notes = `Notes must be ${NOTES_MAX_LENGTH} characters or fewer.`;
+  }
+
+  const startStr = (input.startTime ?? '').trim();
+  const endStr = (input.endTime ?? '').trim();
+  const startMin = TIME_PATTERN.test(startStr) ? parseTimeToMinutes(startStr) : null;
+  const endMin = TIME_PATTERN.test(endStr) ? parseTimeToMinutes(endStr) : null;
 
   if (startMin === null) {
     fieldErrors.startTime = 'Valid start time (HH:MM) is required.';

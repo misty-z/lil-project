@@ -1,0 +1,174 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Primitive Helpers ---
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isAdmin() {
+      return isVerifiedUser() && (
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
+        request.auth.token.email == 'malif0313@gmail.com'
+      );
+    }
+
+    function isValidRoom(roomId) {
+      return roomId is string && roomId in ['main-meeting', 'director-room'];
+    }
+
+    function isValidDate(d) {
+      return d is string && d.size() == 10 && d.matches('^\\d{4}-\\d{2}-\\d{2}$');
+    }
+
+    function isValidTime(t) {
+      return t is string && t.size() == 5 && t.matches('^([01]\\d|2[0-3]):[0-5]\\d$');
+    }
+
+    // --- Validation Blueprints ---
+    function isValidBooking(data) {
+      return data.keys().hasAll([
+          'roomId', 'title', 'organizer', 'date', 'startTime', 'endTime', 'createdByUid', 'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'roomId', 'title', 'organizer', 'date', 'startTime', 'endTime', 'notes', 'createdByUid', 'createdAt'
+        ])
+        && isValidRoom(data.roomId)
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 80
+        && data.organizer is string && data.organizer.size() >= 1 && data.organizer.size() <= 60
+        && isValidDate(data.date)
+        && isValidTime(data.startTime)
+        && isValidTime(data.endTime)
+        && data.startTime < data.endTime
+        && (!data.keys().hasAny(['notes']) || (data.notes is string && data.notes.size() <= 200))
+        && isValidId(data.createdByUid)
+        && data.createdAt == request.time;
+    }
+
+    function isValidNotification(data) {
+      return data.keys().hasAll([
+          'type', 'roomId', 'roomName', 'bookingId', 'title', 'organizer',
+          'date', 'startTime', 'endTime', 'actorUid', 'timestamp'
+        ])
+        && data.keys().hasOnly([
+          'type', 'roomId', 'roomName', 'bookingId', 'title', 'organizer',
+          'date', 'startTime', 'endTime', 'actorUid', 'timestamp'
+        ])
+        && data.type is string && (data.type == 'booking:created' || data.type == 'booking:cancelled')
+        && isValidRoom(data.roomId)
+        && data.roomName is string && data.roomName.size() >= 1 && data.roomName.size() <= 40
+        && isValidId(data.bookingId)
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 80
+        && data.organizer is string && data.organizer.size() >= 1 && data.organizer.size() <= 60
+        && isValidDate(data.date)
+        && isValidTime(data.startTime)
+        && isValidTime(data.endTime)
+        && isValidId(data.actorUid)
+        && data.timestamp == request.time;
+    }
+
+    function isValidAppSeedMeta(data) {
+      return data.keys().hasAll(['seeded', 'seededByUid', 'seededAt'])
+        && data.keys().hasOnly(['seeded', 'seededByUid', 'seededAt'])
+        && data.seeded is bool
+        && data.seeded == true
+        && isValidId(data.seededByUid)
+        && data.seededAt == request.time;
+    }
+
+    function isValidAdminMember(data) {
+      return data.keys().hasAll(['role', 'assignedAt'])
+        && data.keys().hasOnly(['role', 'assignedAt'])
+        && data.role is string && data.role == 'admin'
+        && data.assignedAt == request.time;
+    }
+
+    // --- Collection Rules ---
+
+    // Bookings for Main Meeting Room and Director's Room
+    match /bookings/{bookingId} {
+      allow get: if isVerifiedUser() && isValidId(bookingId) && isValidRoom(existing().roomId);
+      allow list: if isVerifiedUser() && isValidRoom(existing().roomId);
+
+      allow create: if isVerifiedUser()
+        && isValidId(bookingId)
+        && isValidBooking(incoming())
+        && incoming().createdByUid == request.auth.uid
+        && existsAfter(/databases/$(database)/documents/notifications/$(bookingId + '_created'));
+
+      allow update: if false;
+
+      allow delete: if isVerifiedUser()
+        && isValidId(bookingId)
+        && (existing().createdByUid == request.auth.uid || isAdmin())
+        && existsAfter(/databases/$(database)/documents/notifications/$(bookingId + '_cancelled'));
+    }
+
+    // Real-time Booking & Cancellation Notifications
+    match /notifications/{notificationId} {
+      allow get: if isVerifiedUser() && isValidId(notificationId) && isValidRoom(existing().roomId);
+      allow list: if isVerifiedUser() && isValidRoom(existing().roomId);
+
+      allow create: if isVerifiedUser()
+        && isValidId(notificationId)
+        && isValidNotification(incoming())
+        && incoming().actorUid == request.auth.uid
+        && (
+          (incoming().type == 'booking:created'
+            && notificationId == incoming().bookingId + '_created'
+            && existsAfter(/databases/$(database)/documents/bookings/$(incoming().bookingId)))
+          ||
+          (incoming().type == 'booking:cancelled'
+            && notificationId == incoming().bookingId + '_cancelled'
+            && !existsAfter(/databases/$(database)/documents/bookings/$(incoming().bookingId)))
+        );
+
+      allow update: if false;
+
+      allow delete: if isVerifiedUser()
+        && isValidId(notificationId)
+        && (existing().actorUid == request.auth.uid || isAdmin());
+    }
+
+    // One-time Seed Metadata
+    match /appMeta/{metaId} {
+      allow get: if isVerifiedUser() && metaId == 'seed';
+      allow list: if false;
+      allow create: if isVerifiedUser()
+        && metaId == 'seed'
+        && isValidAppSeedMeta(incoming())
+        && incoming().seededByUid == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    // Trusted Admin Registry
+    match /admins/{userId} {
+      allow get: if isVerifiedUser() && isValidId(userId) && (request.auth.uid == userId || isAdmin());
+      allow list: if isAdmin();
+      allow create, update: if isAdmin() && isValidId(userId) && isValidAdminMember(incoming());
+      allow delete: if isAdmin() && isValidId(userId);
+    }
+  }
+}

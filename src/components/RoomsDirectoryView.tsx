@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Building2, CalendarPlus, MapPin, Users } from 'lucide-react';
 import type { Room, RoomId, RoomStatusInfo } from '../types/room';
-import { formatDateISO, formatDurationLabel } from '../utils/bookingRules';
+import { formatDateISO, formatDurationLabel, formatRoomCapacity } from '../utils/bookingRules';
 
 interface RoomsDirectoryViewProps {
   rooms: Room[];
@@ -79,7 +79,7 @@ export function RoomsDirectoryView({
                         <span aria-hidden="true">·</span>
                         <span className="inline-flex items-center gap-1 font-mono tabular-nums">
                           <Users className="h-3.5 w-3.5" />
-                          <span>{room.capacity} seats</span>
+                          <span>{formatRoomCapacity(room)}</span>
                         </span>
                       </p>
                     </div>

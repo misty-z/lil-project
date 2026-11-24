@@ -20,6 +20,7 @@ export interface Booking {
   startTime: string; // HH:MM (24h)
   endTime: string; // HH:MM (24h)
   notes?: string;
+  createdByUid?: string;
   createdAt: string; // ISO timestamp
 }
 
@@ -46,6 +47,7 @@ export interface NotificationEvent {
   date: string;
   startTime: string;
   endTime: string;
+  actorUid?: string;
   timestamp: string; // ISO timestamp
   read: boolean;
 }

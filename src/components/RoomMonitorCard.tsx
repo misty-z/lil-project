@@ -12,6 +12,7 @@ import {
   findNextAvailableSlot,
   formatDateISO,
   formatDurationLabel,
+  formatRoomCapacity,
   minutesToTime,
   parseTimeToMinutes,
 } from '../utils/bookingRules';
@@ -27,6 +28,7 @@ interface RoomMonitorCardProps {
     startTime: string;
     endTime: string;
   }) => void;
+  canCancelBooking: (booking: Booking) => boolean;
   onCancelBooking: (bookingId: string) => Promise<{ ok: boolean; error?: string }>;
 }
 
@@ -42,6 +44,7 @@ export function RoomMonitorCard({
   allBookings,
   now,
   onOpenBookingModal,
+  canCancelBooking,
   onCancelBooking,
 }: RoomMonitorCardProps) {
   const [imgError, setImgError] = useState(false);
@@ -165,7 +168,7 @@ export function RoomMonitorCard({
               {room.name}
             </h2>
             <p className="mt-0.5 text-xs text-slate-200 flex items-center gap-2 flex-wrap">
-              <span className="font-mono tabular-nums">{room.capacity} seats</span>
+              <span className="font-mono tabular-nums">{formatRoomCapacity(room)}</span>
               <span aria-hidden="true">·</span>
               <span>{room.location}</span>
             </p>
@@ -212,39 +215,41 @@ export function RoomMonitorCard({
                 </p>
               </div>
 
-              <div className="shrink-0">
-                {confirmCancelId === statusInfo.currentBooking.id ? (
-                  <div className="flex items-center gap-2">
+              {canCancelBooking(statusInfo.currentBooking) && (
+                <div className="shrink-0">
+                  {confirmCancelId === statusInfo.currentBooking.id ? (
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        disabled={cancellingId === statusInfo.currentBooking.id}
+                        onClick={() => handleConfirmCancel(statusInfo.currentBooking!.id)}
+                        className="px-3 py-1.5 rounded-lg bg-red-600 text-white text-xs font-medium hover:bg-red-700 disabled:opacity-60 whitespace-nowrap"
+                      >
+                        {cancellingId === statusInfo.currentBooking.id
+                          ? 'Cancelling...'
+                          : 'Confirm Cancel'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setConfirmCancelId(null)}
+                        className="px-2.5 py-1.5 rounded-lg border border-slate-200 text-xs font-medium text-slate-600 hover:bg-slate-50 whitespace-nowrap"
+                      >
+                        Keep
+                      </button>
+                    </div>
+                  ) : (
                     <button
                       type="button"
-                      disabled={cancellingId === statusInfo.currentBooking.id}
-                      onClick={() => handleConfirmCancel(statusInfo.currentBooking!.id)}
-                      className="px-3 py-1.5 rounded-lg bg-red-600 text-white text-xs font-medium hover:bg-red-700 disabled:opacity-60 whitespace-nowrap"
+                      onClick={() => setConfirmCancelId(statusInfo.currentBooking!.id)}
+                      aria-label={`Cancel ${statusInfo.currentBooking.title}`}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-medium text-slate-700 hover:bg-red-50 hover:text-red-700 hover:border-red-200 transition-colors whitespace-nowrap"
                     >
-                      {cancellingId === statusInfo.currentBooking.id
-                        ? 'Cancelling...'
-                        : 'Confirm Cancel'}
+                      <Trash2 className="h-3.5 w-3.5" />
+                      <span>Cancel</span>
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => setConfirmCancelId(null)}
-                      className="px-2.5 py-1.5 rounded-lg border border-slate-200 text-xs font-medium text-slate-600 hover:bg-slate-50 whitespace-nowrap"
-                    >
-                      Keep
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => setConfirmCancelId(statusInfo.currentBooking!.id)}
-                    aria-label={`Cancel ${statusInfo.currentBooking.title}`}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-medium text-slate-700 hover:bg-red-50 hover:text-red-700 hover:border-red-200 transition-colors whitespace-nowrap"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                    <span>Cancel</span>
-                  </button>
-                )}
-              </div>
+                  )}
+                </div>
+              )}
             </div>
           ) : (
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -394,36 +399,38 @@ export function RoomMonitorCard({
                       </p>
                     </div>
 
-                    <div className="shrink-0">
-                      {isConfirming ? (
-                        <div className="flex items-center gap-1.5">
+                    {canCancelBooking(booking) && (
+                      <div className="shrink-0">
+                        {isConfirming ? (
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              disabled={isBusy}
+                              onClick={() => handleConfirmCancel(booking.id)}
+                              className="px-2.5 py-1 rounded-md bg-red-600 text-white text-xs font-medium hover:bg-red-700 disabled:opacity-60 whitespace-nowrap"
+                            >
+                              {isBusy ? 'Cancelling...' : 'Confirm'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setConfirmCancelId(null)}
+                              className="px-2 py-1 rounded-md border border-slate-200 text-xs font-medium text-slate-600 hover:bg-slate-50 whitespace-nowrap"
+                            >
+                              Keep
+                            </button>
+                          </div>
+                        ) : (
                           <button
                             type="button"
-                            disabled={isBusy}
-                            onClick={() => handleConfirmCancel(booking.id)}
-                            className="px-2.5 py-1 rounded-md bg-red-600 text-white text-xs font-medium hover:bg-red-700 disabled:opacity-60 whitespace-nowrap"
+                            onClick={() => setConfirmCancelId(booking.id)}
+                            aria-label={`Cancel ${booking.title}`}
+                            className="px-2.5 py-1 rounded-md text-xs font-medium text-slate-500 hover:text-red-700 hover:bg-red-50 transition-colors whitespace-nowrap"
                           >
-                            {isBusy ? 'Cancelling...' : 'Confirm'}
+                            Cancel
                           </button>
-                          <button
-                            type="button"
-                            onClick={() => setConfirmCancelId(null)}
-                            className="px-2 py-1 rounded-md border border-slate-200 text-xs font-medium text-slate-600 hover:bg-slate-50 whitespace-nowrap"
-                          >
-                            Keep
-                          </button>
-                        </div>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => setConfirmCancelId(booking.id)}
-                          aria-label={`Cancel ${booking.title}`}
-                          className="px-2.5 py-1 rounded-md text-xs font-medium text-slate-500 hover:text-red-700 hover:bg-red-50 transition-colors whitespace-nowrap"
-                        >
-                          Cancel
-                        </button>
-                      )}
-                    </div>
+                        )}
+                      </div>
+                    )}
                   </li>
                 );
               })}
