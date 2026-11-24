@@ -1,0 +1,117 @@
+{
+  "bookings": [
+    {
+      "id": "seed-main-active",
+      "roomId": "main-meeting",
+      "title": "Weekly Product & Operations Sync",
+      "organizer": "Sarah Chen",
+      "date": "2026-11-24",
+      "startTime": "02:55",
+      "endTime": "03:55",
+      "notes": "Cross-functional sprint check-in and release readiness.",
+      "createdAt": "2026-11-24T02:27:13.502Z"
+    },
+    {
+      "id": "seed-director-upcoming",
+      "roomId": "director-room",
+      "title": "Executive Budget & Hiring Briefing",
+      "organizer": "Elena Rostova",
+      "date": "2026-11-24",
+      "startTime": "04:30",
+      "endTime": "05:15",
+      "notes": "Q4 headcount sign-off with department leads.",
+      "createdAt": "2026-11-24T01:42:13.502Z"
+    },
+    {
+      "id": "seed-main-later",
+      "roomId": "main-meeting",
+      "title": "Design System Architecture Review",
+      "organizer": "Marcus Vance",
+      "date": "2026-11-24",
+      "startTime": "04:40",
+      "endTime": "05:25",
+      "notes": "Component tokens and accessibility audit.",
+      "createdAt": "2026-11-24T01:12:13.502Z"
+    },
+    {
+      "id": "seed-main-tomorrow",
+      "roomId": "main-meeting",
+      "title": "Client Onboarding Workshop",
+      "organizer": "David Kim",
+      "date": "2026-11-25",
+      "startTime": "09:30",
+      "endTime": "11:00",
+      "notes": "Technical kickoff with enterprise accounts.",
+      "createdAt": "2026-11-23T23:12:13.502Z"
+    },
+    {
+      "id": "seed-director-tomorrow",
+      "roomId": "director-room",
+      "title": "Board Advisory Check-in",
+      "organizer": "Claire Bennett",
+      "date": "2026-11-25",
+      "startTime": "14:00",
+      "endTime": "15:00",
+      "notes": "Quarterly governance update.",
+      "createdAt": "2026-11-23T23:12:13.502Z"
+    }
+  ],
+  "notifications": [
+    {
+      "id": "0230acf6-b9b7-4cd3-82c2-bcbaec321cc9",
+      "type": "booking:cancelled",
+      "roomId": "director-room",
+      "roomName": "Director's Room",
+      "bookingId": "7e3f27e0-e82e-41ee-9bbf-c37293236d9c",
+      "title": "Q4 Budget Review",
+      "organizer": "Alex Morgan",
+      "date": "2026-11-24",
+      "startTime": "03:15",
+      "endTime": "03:45",
+      "timestamp": "2026-11-24T03:12:35.627Z",
+      "read": true
+    },
+    {
+      "id": "ab808d62-3115-4b1e-9449-dbb648541f8f",
+      "type": "booking:created",
+      "roomId": "director-room",
+      "roomName": "Director's Room",
+      "bookingId": "7e3f27e0-e82e-41ee-9bbf-c37293236d9c",
+      "title": "Q4 Budget Review",
+      "organizer": "Alex Morgan",
+      "date": "2026-11-24",
+      "startTime": "03:15",
+      "endTime": "03:45",
+      "timestamp": "2026-11-24T03:12:27.570Z",
+      "read": true
+    },
+    {
+      "id": "seed-notif-1",
+      "type": "booking:created",
+      "roomId": "main-meeting",
+      "roomName": "Main Meeting Room",
+      "bookingId": "seed-main-active",
+      "title": "Weekly Product & Operations Sync",
+      "organizer": "Sarah Chen",
+      "date": "2026-11-24",
+      "startTime": "02:55",
+      "endTime": "03:55",
+      "timestamp": "2026-11-24T02:27:13.502Z",
+      "read": true
+    },
+    {
+      "id": "seed-notif-2",
+      "type": "booking:created",
+      "roomId": "director-room",
+      "roomName": "Director's Room",
+      "bookingId": "seed-director-upcoming",
+      "title": "Executive Budget & Hiring Briefing",
+      "organizer": "Elena Rostova",
+      "date": "2026-11-24",
+      "startTime": "04:30",
+      "endTime": "05:15",
+      "timestamp": "2026-11-24T01:42:13.502Z",
+      "read": true
+    }
+  ]
+}

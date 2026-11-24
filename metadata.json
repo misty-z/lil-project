@@ -1,0 +1,6 @@
+{
+  "name": "Meridian Rooms",
+  "description": "Real-time office meeting room availability monitor for the Main Meeting Room and Director's Room with live booking and cancellation notifications.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
