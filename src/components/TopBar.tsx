@@ -5,6 +5,7 @@ interface TopBarProps {
   activeView: NavView;
   now: Date;
   unreadCount: number;
+  isAdmin: boolean;
   onOpenMobileNav: () => void;
   onOpenNotifications: () => void;
   onOpenBookModal: () => void;
@@ -12,14 +13,14 @@ interface TopBarProps {
 
 const VIEW_TITLES: Record<NavView, string> = {
   monitor: 'Office / Meeting Rooms / Live Monitor',
-  schedule: 'Office / Meeting Rooms / Day Schedule',
+  schedule: 'Office / Meeting Rooms / Month Schedule',
   notifications: 'Office / Meeting Rooms / Notifications',
   rooms: 'Office / Meeting Rooms / Directory',
 };
 
 const SHORT_VIEW_TITLES: Record<NavView, string> = {
   monitor: 'Live Monitor',
-  schedule: 'Day Schedule',
+  schedule: 'Month Schedule',
   notifications: 'Notifications',
   rooms: 'Room Directory',
 };
@@ -28,6 +29,7 @@ export function TopBar({
   activeView,
   now,
   unreadCount,
+  isAdmin,
   onOpenMobileNav,
   onOpenNotifications,
   onOpenBookModal,
@@ -45,8 +47,8 @@ export function TopBar({
   });
 
   return (
-    <header className="sticky top-0 z-30 h-16 bg-white/95 backdrop-blur border-b border-slate-200 px-4 sm:px-8 flex items-center justify-between gap-4">
-      <div className="flex items-center gap-3 min-w-0">
+    <header className="sticky top-0 z-30 h-16 bg-white/95 backdrop-blur border-b border-slate-200 px-3 sm:px-8 flex items-center justify-between gap-2 sm:gap-4">
+      <div className="flex items-center gap-2 sm:gap-3 min-w-0">
         <button
           type="button"
           onClick={onOpenMobileNav}
@@ -64,7 +66,7 @@ export function TopBar({
         </p>
       </div>
 
-      <div className="flex items-center gap-3 sm:gap-5 shrink-0">
+      <div className="flex items-center gap-2 sm:gap-5 shrink-0">
         <div className="hidden sm:flex items-center gap-2 text-xs text-slate-500 whitespace-nowrap">
           <span>{dateString}</span>
           <span aria-hidden="true">·</span>
@@ -97,10 +99,10 @@ export function TopBar({
         <button
           type="button"
           onClick={onOpenBookModal}
-          className="inline-flex h-10 items-center gap-2 px-4 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition-colors whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
+          className="inline-flex h-10 items-center gap-1.5 sm:gap-2 px-3 sm:px-4 rounded-lg bg-blue-600 text-white text-xs sm:text-sm font-medium hover:bg-blue-700 transition-colors whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
         >
           <Plus className="h-4 w-4" />
-          <span>Book a Room</span>
+          <span>{isAdmin ? 'Book a Room' : 'Request Meeting'}</span>
         </button>
       </div>
     </header>

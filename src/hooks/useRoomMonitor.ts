@@ -26,12 +26,15 @@ import {
 } from '../firebase';
 import type {
   Booking,
+  BookingActorType,
+  BookingStatus,
   CreateBookingInput,
   NotificationEvent,
   Room,
   RoomId,
 } from '../types/room';
 import {
+  canApproveBooking,
   createInitialSeedBookings,
   ROOM_MAP,
   ROOMS,
@@ -62,10 +65,14 @@ function playNotificationTone(type: NotificationEvent['type']): void {
     osc.connect(gain);
     gain.connect(ctx.destination);
 
-    if (type === 'booking:created') {
+    if (type === 'booking:created' || type === 'booking:approved') {
       osc.type = 'sine';
       osc.frequency.setValueAtTime(587.33, now);
       osc.frequency.setValueAtTime(880, now + 0.09);
+    } else if (type === 'booking:requested') {
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(523.25, now);
+      osc.frequency.setValueAtTime(659.25, now + 0.09);
     } else {
       osc.type = 'sine';
       osc.frequency.setValueAtTime(523.25, now);
@@ -94,6 +101,20 @@ function timestampToISO(val: unknown): string {
   return new Date().toISOString();
 }
 
+function parseBookingStatus(val: unknown): BookingStatus {
+  if (val === 'pending' || val === 'approved' || val === 'rejected') {
+    return val;
+  }
+  return 'approved';
+}
+
+function parseActorType(val: unknown): BookingActorType {
+  if (val === 'guest' || val === 'admin') {
+    return val;
+  }
+  return 'admin';
+}
+
 function formatQuotaMessage(err: unknown): string | null {
   const msg = err instanceof Error ? err.message : String(err);
   if (
@@ -108,9 +129,25 @@ function formatQuotaMessage(err: unknown): string | null {
   return null;
 }
 
+function getNotificationDesktopTitle(type: NotificationEvent['type']): string {
+  switch (type) {
+    case 'booking:requested':
+      return 'Meeting Requested';
+    case 'booking:created':
+      return 'Room Booked';
+    case 'booking:approved':
+      return 'Request Approved';
+    case 'booking:rejected':
+      return 'Request Declined';
+    case 'booking:cancelled':
+      return 'Booking Cancelled';
+  }
+}
+
 export function useRoomMonitor() {
   const [rooms] = useState<Room[]>(ROOMS);
   const [user, setUser] = useState<User | null>(null);
+  const [isAdmin, setIsAdmin] = useState<boolean>(false);
   const [authReady, setAuthReady] = useState<boolean>(false);
   const [isSigningIn, setIsSigningIn] = useState<boolean>(false);
   const [authError, setAuthError] = useState<string | null>(null);
@@ -119,7 +156,14 @@ export function useRoomMonitor() {
   const [rawNotifications, setRawNotifications] = useState<
     Omit<NotificationEvent, 'read'>[]
   >([]);
-  const [lastReadMs, setLastReadMs] = useState<number>(0);
+  const [lastReadMs, setLastReadMs] = useState<number>(() => {
+    try {
+      const saved = Number(localStorage.getItem('meridian_last_read_guest') || '0');
+      return Number.isFinite(saved) ? saved : 0;
+    } catch {
+      return 0;
+    }
+  });
   const [toasts, setToasts] = useState<ToastNotification[]>([]);
   const [connectionState, setConnectionState] = useState<ConnectionState>('connecting');
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -161,26 +205,37 @@ export function useRoomMonitor() {
     return () => window.clearInterval(timer);
   }, []);
 
-  // Auth listener
+  // Optional Admin Auth listener (does NOT block guest room viewing/requesting)
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (currentUser) => {
+    const unsub = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
       setAuthReady(true);
-      if (currentUser) {
-        try {
-          const saved = Number(
-            localStorage.getItem(`meridian_last_read_${currentUser.uid}`) || '0'
-          );
-          setLastReadMs(Number.isFinite(saved) ? saved : 0);
-        } catch {
-          setLastReadMs(0);
-        }
-      } else {
-        setBookings([]);
-        setRawNotifications([]);
-        seenNotificationIds.current.clear();
-        initialNotifLoaded.current = false;
-        setIsLoading(false);
+
+      const storageKey = currentUser
+        ? `meridian_last_read_${currentUser.uid}`
+        : 'meridian_last_read_guest';
+      try {
+        const saved = Number(localStorage.getItem(storageKey) || '0');
+        setLastReadMs(Number.isFinite(saved) ? saved : 0);
+      } catch {
+        setLastReadMs(0);
+      }
+
+      if (!currentUser || !currentUser.emailVerified) {
+        setIsAdmin(false);
+        return;
+      }
+
+      if (currentUser.email === ADMIN_EMAIL) {
+        setIsAdmin(true);
+        return;
+      }
+
+      try {
+        const adminSnap = await getDoc(doc(db, 'admins', currentUser.uid));
+        setIsAdmin(adminSnap.exists() && adminSnap.data()?.role === 'admin');
+      } catch {
+        setIsAdmin(false);
       }
     });
     return () => unsub();
@@ -202,6 +257,7 @@ export function useRoomMonitor() {
   }, []);
 
   const signOutUser = useCallback(async () => {
+    setAuthError(null);
     await signOut(auth);
   }, []);
 
@@ -274,15 +330,15 @@ export function useRoomMonitor() {
       typeof Notification !== 'undefined' &&
       Notification.permission === 'granted'
     ) {
-      const prefix = event.type === 'booking:created' ? 'Room Booked' : 'Booking Cancelled';
+      const prefix = getNotificationDesktopTitle(event.type);
       new Notification(`${prefix}: ${event.roomName}`, {
         body: `${event.title} (${event.startTime}–${event.endTime}) · ${event.organizer}`,
       });
     }
   }, []);
 
-  // One-time initial seed when signed in and appMeta/seed doesn't exist yet
-  const ensureInitialSeed = useCallback(async (currentUser: User) => {
+  // One-time initial seed when Admin signs in and appMeta/seed doesn't exist yet
+  const ensureInitialSeed = useCallback(async (adminUser: User) => {
     const seedRef = doc(db, 'appMeta', 'seed');
     try {
       const seedSnap = await getDoc(seedRef);
@@ -301,7 +357,9 @@ export function useRoomMonitor() {
           startTime: b.startTime,
           endTime: b.endTime,
           ...(b.notes ? { notes: b.notes } : {}),
-          createdByUid: currentUser.uid,
+          status: 'approved',
+          createdByType: 'admin',
+          createdByUid: adminUser.uid,
           createdAt: serverTimestamp(),
         });
 
@@ -316,14 +374,14 @@ export function useRoomMonitor() {
           date: b.date,
           startTime: b.startTime,
           endTime: b.endTime,
-          actorUid: currentUser.uid,
+          actorType: 'admin',
           timestamp: serverTimestamp(),
         });
       }
 
       batch.set(seedRef, {
         seeded: true,
-        seededByUid: currentUser.uid,
+        seededByUid: adminUser.uid,
         seededAt: serverTimestamp(),
       });
 
@@ -334,7 +392,6 @@ export function useRoomMonitor() {
         setLoadError(quotaMsg);
         return;
       }
-      // If another user seeded concurrently, ignore already-exists; otherwise report
       const msg = err instanceof Error ? err.message : String(err);
       if (msg.includes('Missing or insufficient permissions')) {
         handleFirestoreError(err, OperationType.WRITE, 'appMeta/seed');
@@ -342,17 +399,19 @@ export function useRoomMonitor() {
     }
   }, []);
 
-  // Attach real-time Firestore listeners only when authReady && user
   useEffect(() => {
-    if (!authReady || !user) return;
+    if (isAdmin && user) {
+      void ensureInitialSeed(user);
+    }
+  }, [isAdmin, user, ensureInitialSeed]);
 
+  // Attach real-time Firestore listeners immediately for public monitoring (no login required)
+  useEffect(() => {
     setIsLoading(true);
     setLoadError(null);
     setConnectionState('connecting');
     initialNotifLoaded.current = false;
     seenNotificationIds.current.clear();
-
-    void ensureInitialSeed(user);
 
     const bookingsPath = 'bookings';
     const bookingsQuery = query(
@@ -374,9 +433,14 @@ export function useRoomMonitor() {
             startTime: String(data.startTime ?? ''),
             endTime: String(data.endTime ?? ''),
             notes: typeof data.notes === 'string' ? data.notes : undefined,
+            status: parseBookingStatus(data.status),
+            createdByType: parseActorType(data.createdByType),
             createdByUid:
               typeof data.createdByUid === 'string' ? data.createdByUid : undefined,
             createdAt: timestampToISO(data.createdAt),
+            reviewedByUid:
+              typeof data.reviewedByUid === 'string' ? data.reviewedByUid : undefined,
+            reviewedAt: data.reviewedAt ? timestampToISO(data.reviewedAt) : undefined,
           };
         });
         setBookings(sortBookingsByTime(items));
@@ -419,7 +483,7 @@ export function useRoomMonitor() {
               date: String(data.date ?? ''),
               startTime: String(data.startTime ?? ''),
               endTime: String(data.endTime ?? ''),
-              actorUid: typeof data.actorUid === 'string' ? data.actorUid : undefined,
+              actorType: parseActorType(data.actorType),
               timestamp: timestampToISO(data.timestamp),
             };
           })
@@ -456,7 +520,7 @@ export function useRoomMonitor() {
       unsubBookings();
       unsubNotifications();
     };
-  }, [authReady, user, ensureInitialSeed, triggerLiveAlert]);
+  }, [triggerLiveAlert]);
 
   const notifications: NotificationEvent[] = useMemo(() => {
     return rawNotifications.map((n) => ({
@@ -470,31 +534,44 @@ export function useRoomMonitor() {
     [notifications]
   );
 
+  const pendingRequests = useMemo(
+    () => sortBookingsByTime(bookings.filter((b) => b.status === 'pending')),
+    [bookings]
+  );
+
   const canCancelBooking = useCallback(
-    (booking: Booking): boolean => {
-      if (!user) return false;
-      if (user.email === ADMIN_EMAIL) return true;
-      return booking.createdByUid === user.uid;
+    (_booking: Booking): boolean => {
+      return isAdmin;
     },
-    [user]
+    [isAdmin]
   );
 
   const createBooking = useCallback(
     async (
       input: CreateBookingInput
     ): Promise<{ ok: boolean; error?: string; booking?: Booking }> => {
-      if (!user) {
-        return { ok: false, error: 'Please sign in to book a room.' };
-      }
-
       const check = validateBookingInput(input, bookings);
       if (!check.valid) {
         return { ok: false, error: check.error || 'Invalid booking details.' };
       }
 
       const bookingId = crypto.randomUUID();
-      const notificationId = `${bookingId}_created`;
+      const trimmedTitle = input.title.trim();
+      const trimmedOrganizer = input.organizer.trim();
+      const trimmedDate = input.date.trim();
+      const trimmedStart = input.startTime.trim();
+      const trimmedEnd = input.endTime.trim();
       const trimmedNotes = input.notes?.trim();
+
+      const adminBooking = isAdmin && user !== null;
+      const status: BookingStatus = adminBooking ? 'approved' : 'pending';
+      const createdByType: BookingActorType = adminBooking ? 'admin' : 'guest';
+      const notifType: NotificationEvent['type'] = adminBooking
+        ? 'booking:created'
+        : 'booking:requested';
+      const notificationId = adminBooking
+        ? `${bookingId}_created`
+        : `${bookingId}_requested`;
 
       const batch = writeBatch(db);
       const bookingRef = doc(db, 'bookings', bookingId);
@@ -502,27 +579,29 @@ export function useRoomMonitor() {
 
       batch.set(bookingRef, {
         roomId: input.roomId,
-        title: input.title.trim(),
-        organizer: input.organizer.trim(),
-        date: input.date.trim(),
-        startTime: input.startTime.trim(),
-        endTime: input.endTime.trim(),
+        title: trimmedTitle,
+        organizer: trimmedOrganizer,
+        date: trimmedDate,
+        startTime: trimmedStart,
+        endTime: trimmedEnd,
         ...(trimmedNotes ? { notes: trimmedNotes } : {}),
-        createdByUid: user.uid,
+        status,
+        createdByType,
+        ...(adminBooking ? { createdByUid: user.uid } : {}),
         createdAt: serverTimestamp(),
       });
 
       batch.set(notifRef, {
-        type: 'booking:created',
+        type: notifType,
         roomId: input.roomId,
         roomName: ROOM_MAP[input.roomId].name,
         bookingId,
-        title: input.title.trim(),
-        organizer: input.organizer.trim(),
-        date: input.date.trim(),
-        startTime: input.startTime.trim(),
-        endTime: input.endTime.trim(),
-        actorUid: user.uid,
+        title: trimmedTitle,
+        organizer: trimmedOrganizer,
+        date: trimmedDate,
+        startTime: trimmedStart,
+        endTime: trimmedEnd,
+        actorType: createdByType,
         timestamp: serverTimestamp(),
       });
 
@@ -533,13 +612,15 @@ export function useRoomMonitor() {
           booking: {
             id: bookingId,
             roomId: input.roomId,
-            title: input.title.trim(),
-            organizer: input.organizer.trim(),
-            date: input.date.trim(),
-            startTime: input.startTime.trim(),
-            endTime: input.endTime.trim(),
+            title: trimmedTitle,
+            organizer: trimmedOrganizer,
+            date: trimmedDate,
+            startTime: trimmedStart,
+            endTime: trimmedEnd,
             notes: trimmedNotes || undefined,
-            createdByUid: user.uid,
+            status,
+            createdByType,
+            ...(adminBooking ? { createdByUid: user.uid } : {}),
             createdAt: new Date().toISOString(),
           },
         };
@@ -549,13 +630,104 @@ export function useRoomMonitor() {
         handleFirestoreError(err, OperationType.WRITE, `bookings/${bookingId}`);
       }
     },
-    [user, bookings]
+    [isAdmin, user, bookings]
+  );
+
+  const approveBooking = useCallback(
+    async (bookingId: string): Promise<{ ok: boolean; error?: string }> => {
+      if (!isAdmin || !user) {
+        return { ok: false, error: 'Only the administrator can approve requests.' };
+      }
+
+      const target = bookings.find((b) => b.id === bookingId);
+      if (!target) {
+        return { ok: false, error: 'Meeting request not found.' };
+      }
+
+      const check = canApproveBooking(target, bookings);
+      if (!check.ok) {
+        return { ok: false, error: check.error };
+      }
+
+      const batch = writeBatch(db);
+      batch.update(doc(db, 'bookings', bookingId), {
+        status: 'approved',
+        reviewedByUid: user.uid,
+        reviewedAt: serverTimestamp(),
+      });
+      batch.set(doc(db, 'notifications', `${bookingId}_approved`), {
+        type: 'booking:approved',
+        roomId: target.roomId,
+        roomName: ROOM_MAP[target.roomId].name,
+        bookingId: target.id,
+        title: target.title,
+        organizer: target.organizer,
+        date: target.date,
+        startTime: target.startTime,
+        endTime: target.endTime,
+        actorType: 'admin',
+        timestamp: serverTimestamp(),
+      });
+
+      try {
+        await batch.commit();
+        return { ok: true };
+      } catch (err) {
+        const quotaMsg = formatQuotaMessage(err);
+        if (quotaMsg) return { ok: false, error: quotaMsg };
+        handleFirestoreError(err, OperationType.UPDATE, `bookings/${bookingId}`);
+      }
+    },
+    [isAdmin, user, bookings]
+  );
+
+  const rejectBooking = useCallback(
+    async (bookingId: string): Promise<{ ok: boolean; error?: string }> => {
+      if (!isAdmin || !user) {
+        return { ok: false, error: 'Only the administrator can decline requests.' };
+      }
+
+      const target = bookings.find((b) => b.id === bookingId);
+      if (!target || target.status !== 'pending') {
+        return { ok: false, error: 'Pending meeting request not found.' };
+      }
+
+      const batch = writeBatch(db);
+      batch.update(doc(db, 'bookings', bookingId), {
+        status: 'rejected',
+        reviewedByUid: user.uid,
+        reviewedAt: serverTimestamp(),
+      });
+      batch.set(doc(db, 'notifications', `${bookingId}_rejected`), {
+        type: 'booking:rejected',
+        roomId: target.roomId,
+        roomName: ROOM_MAP[target.roomId].name,
+        bookingId: target.id,
+        title: target.title,
+        organizer: target.organizer,
+        date: target.date,
+        startTime: target.startTime,
+        endTime: target.endTime,
+        actorType: 'admin',
+        timestamp: serverTimestamp(),
+      });
+
+      try {
+        await batch.commit();
+        return { ok: true };
+      } catch (err) {
+        const quotaMsg = formatQuotaMessage(err);
+        if (quotaMsg) return { ok: false, error: quotaMsg };
+        handleFirestoreError(err, OperationType.UPDATE, `bookings/${bookingId}`);
+      }
+    },
+    [isAdmin, user, bookings]
   );
 
   const cancelBooking = useCallback(
     async (bookingId: string): Promise<{ ok: boolean; error?: string }> => {
-      if (!user) {
-        return { ok: false, error: 'Please sign in to cancel a booking.' };
+      if (!isAdmin || !user) {
+        return { ok: false, error: 'Only the administrator can cancel bookings.' };
       }
 
       const target = bookings.find((b) => b.id === bookingId);
@@ -576,7 +748,7 @@ export function useRoomMonitor() {
         date: target.date,
         startTime: target.startTime,
         endTime: target.endTime,
-        actorUid: user.uid,
+        actorType: 'admin',
         timestamp: serverTimestamp(),
       });
 
@@ -589,30 +761,28 @@ export function useRoomMonitor() {
         handleFirestoreError(err, OperationType.DELETE, `bookings/${bookingId}`);
       }
     },
-    [user, bookings]
+    [isAdmin, user, bookings]
   );
 
   const markAllNotificationsRead = useCallback(() => {
     const nowTs = Date.now();
     setLastReadMs(nowTs);
-    if (user) {
-      try {
-        localStorage.setItem(`meridian_last_read_${user.uid}`, String(nowTs));
-      } catch {
-        // Ignore storage errors
-      }
+    const storageKey = user
+      ? `meridian_last_read_${user.uid}`
+      : 'meridian_last_read_guest';
+    try {
+      localStorage.setItem(storageKey, String(nowTs));
+    } catch {
+      // Ignore storage errors
     }
   }, [user]);
 
   const clearAllNotifications = useCallback(async () => {
-    if (!user) return;
-    const deletable = rawNotifications.filter(
-      (n) => user.email === ADMIN_EMAIL || n.actorUid === user.uid
-    );
-    if (deletable.length === 0) return;
+    if (!isAdmin || !user) return;
+    if (rawNotifications.length === 0) return;
 
     const batch = writeBatch(db);
-    for (const item of deletable) {
+    for (const item of rawNotifications) {
       batch.delete(doc(db, 'notifications', item.id));
     }
     try {
@@ -625,7 +795,7 @@ export function useRoomMonitor() {
       }
       handleFirestoreError(err, OperationType.DELETE, 'notifications');
     }
-  }, [user, rawNotifications]);
+  }, [isAdmin, user, rawNotifications]);
 
   const retryLoad = useCallback(() => {
     window.location.reload();
@@ -633,6 +803,7 @@ export function useRoomMonitor() {
 
   return {
     user,
+    isAdmin,
     authReady,
     isSigningIn,
     authError,
@@ -640,6 +811,7 @@ export function useRoomMonitor() {
     signOutUser,
     rooms,
     bookings,
+    pendingRequests,
     notifications,
     unreadCount,
     toasts,
@@ -654,6 +826,8 @@ export function useRoomMonitor() {
     dismissToast,
     canCancelBooking,
     createBooking,
+    approveBooking,
+    rejectBooking,
     cancelBooking,
     markAllNotificationsRead,
     clearAllNotifications,

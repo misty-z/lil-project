@@ -46,6 +46,18 @@ export function isValidRoomId(value: string): value is RoomId {
   return value === 'main-meeting' || value === 'director-room';
 }
 
+export function isBookingApproved(booking: Booking): boolean {
+  return (booking.status ?? 'approved') === 'approved';
+}
+
+export function isBookingPending(booking: Booking): boolean {
+  return booking.status === 'pending';
+}
+
+export function isBookingRejected(booking: Booking): boolean {
+  return booking.status === 'rejected';
+}
+
 export function parseTimeToMinutes(hhmm: string): number | null {
   if (typeof hhmm !== 'string') return null;
   const match = /^(\d{2}):(\d{2})$/.exec(hhmm.trim());
@@ -164,11 +176,14 @@ export function validateBookingInput(
   const sMin = startMin as number;
   const eMin = endMin as number;
 
-  const sameRoomSameDay = existingBookings.filter(
-    (b) => b.roomId === input.roomId && b.date === input.date.trim()
+  const sameRoomSameDayApproved = existingBookings.filter(
+    (b) =>
+      isBookingApproved(b) &&
+      b.roomId === input.roomId &&
+      b.date === input.date.trim()
   );
 
-  for (const existing of sameRoomSameDay) {
+  for (const existing of sameRoomSameDayApproved) {
     const bStart = parseTimeToMinutes(existing.startTime);
     const bEnd = parseTimeToMinutes(existing.endTime);
     if (bStart !== null && bEnd !== null && doIntervalsOverlap(sMin, eMin, bStart, bEnd)) {
@@ -186,6 +201,44 @@ export function validateBookingInput(
   }
 
   return { valid: true };
+}
+
+export function canApproveBooking(
+  target: Booking,
+  allBookings: Booking[]
+): { ok: boolean; error?: string; conflictingBooking?: Booking } {
+  if (target.status !== 'pending') {
+    return {
+      ok: false,
+      error: 'Only pending meeting requests can be approved.',
+    };
+  }
+
+  const tStart = parseTimeToMinutes(target.startTime);
+  const tEnd = parseTimeToMinutes(target.endTime);
+  if (tStart === null || tEnd === null || tEnd <= tStart) {
+    return { ok: false, error: 'Request has an invalid time window.' };
+  }
+
+  const conflicting = allBookings.find((b) => {
+    if (b.id === target.id) return false;
+    if (!isBookingApproved(b)) return false;
+    if (b.roomId !== target.roomId || b.date !== target.date) return false;
+    const bStart = parseTimeToMinutes(b.startTime);
+    const bEnd = parseTimeToMinutes(b.endTime);
+    return bStart !== null && bEnd !== null && doIntervalsOverlap(tStart, tEnd, bStart, bEnd);
+  });
+
+  if (conflicting) {
+    const roomName = ROOM_MAP[target.roomId]?.name ?? target.roomId;
+    return {
+      ok: false,
+      conflictingBooking: conflicting,
+      error: `Cannot approve: ${roomName} is already approved for "${conflicting.title}" (${conflicting.startTime}–${conflicting.endTime}).`,
+    };
+  }
+
+  return { ok: true };
 }
 
 export function sortBookingsByTime(bookings: Booking[]): Booking[] {
@@ -206,7 +259,15 @@ export function computeRoomStatus(
   const nowMinutes = now.getHours() * 60 + now.getMinutes();
 
   const todayBookings = sortBookingsByTime(
-    bookings.filter((b) => b.roomId === roomId && b.date === todayISO)
+    bookings.filter(
+      (b) => b.roomId === roomId && b.date === todayISO && isBookingApproved(b)
+    )
+  );
+
+  const pendingBookings = sortBookingsByTime(
+    bookings.filter(
+      (b) => b.roomId === roomId && b.date === todayISO && isBookingPending(b)
+    )
   );
 
   let currentBooking: Booking | null = null;
@@ -237,6 +298,7 @@ export function computeRoomStatus(
         ? Math.max(0, (parseTimeToMinutes(nextBooking.startTime) ?? nowMinutes) - nowMinutes)
         : null,
       todayBookings,
+      pendingBookings,
       bookedMinutesToday,
     };
   }
@@ -251,6 +313,7 @@ export function computeRoomStatus(
       minutesUntilFree: null,
       minutesUntilNext,
       todayBookings,
+      pendingBookings,
       bookedMinutesToday,
     };
   }
@@ -262,6 +325,7 @@ export function computeRoomStatus(
     minutesUntilFree: null,
     minutesUntilNext: null,
     todayBookings,
+    pendingBookings,
     bookedMinutesToday,
   };
 }
@@ -288,7 +352,9 @@ export function findNextAvailableSlot(
   }
 
   const dayBookings = sortBookingsByTime(
-    bookings.filter((b) => b.roomId === roomId && b.date === date)
+    bookings.filter(
+      (b) => b.roomId === roomId && b.date === date && isBookingApproved(b)
+    )
   );
 
   for (const booking of dayBookings) {
@@ -334,6 +400,8 @@ export function createInitialSeedBookings(now: Date = new Date()): Booking[] {
       startTime: minutesToTime(activeStart),
       endTime: minutesToTime(activeEnd),
       notes: 'Cross-functional sprint check-in and release readiness.',
+      status: 'approved',
+      createdByType: 'admin',
       createdAt: new Date(now.getTime() - 45 * 60_000).toISOString(),
     });
 
@@ -349,6 +417,8 @@ export function createInitialSeedBookings(now: Date = new Date()): Booking[] {
         startTime: minutesToTime(laterStart),
         endTime: minutesToTime(laterStart + 45),
         notes: 'Component tokens and accessibility audit.',
+        status: 'approved',
+        createdByType: 'admin',
         createdAt: new Date(now.getTime() - 120 * 60_000).toISOString(),
       });
     }
@@ -362,6 +432,8 @@ export function createInitialSeedBookings(now: Date = new Date()): Booking[] {
       startTime: '10:00',
       endTime: '11:00',
       notes: 'Cross-functional sprint check-in.',
+      status: 'approved',
+      createdByType: 'admin',
       createdAt: new Date(now.getTime() - 120 * 60_000).toISOString(),
     });
   }
@@ -378,6 +450,8 @@ export function createInitialSeedBookings(now: Date = new Date()): Booking[] {
       startTime: minutesToTime(dirUpcomingStart),
       endTime: minutesToTime(dirUpcomingStart + 45),
       notes: 'Q4 headcount sign-off with department leads.',
+      status: 'approved',
+      createdByType: 'admin',
       createdAt: new Date(now.getTime() - 90 * 60_000).toISOString(),
     });
   } else if (nowMin >= 180) {
@@ -391,6 +465,8 @@ export function createInitialSeedBookings(now: Date = new Date()): Booking[] {
       startTime: minutesToTime(Math.max(0, pastEnd - 45)),
       endTime: minutesToTime(pastEnd),
       notes: 'Q4 headcount sign-off with department leads.',
+      status: 'approved',
+      createdByType: 'admin',
       createdAt: new Date(now.getTime() - 180 * 60_000).toISOString(),
     });
   }
@@ -406,6 +482,8 @@ export function createInitialSeedBookings(now: Date = new Date()): Booking[] {
       startTime: '09:30',
       endTime: '11:00',
       notes: 'Technical kickoff with enterprise accounts.',
+      status: 'approved',
+      createdByType: 'admin',
       createdAt: new Date(now.getTime() - 240 * 60_000).toISOString(),
     },
     {
@@ -417,9 +495,105 @@ export function createInitialSeedBookings(now: Date = new Date()): Booking[] {
       startTime: '14:00',
       endTime: '15:00',
       notes: 'Quarterly governance update.',
+      status: 'approved',
+      createdByType: 'admin',
       createdAt: new Date(now.getTime() - 240 * 60_000).toISOString(),
     }
   );
 
   return sortBookingsByTime(seeds);
+}
+
+export interface MonthDaySummary {
+  dateISO: string;
+  dayOfMonth: number;
+  inCurrentMonth: boolean;
+  mainBookings: Booking[];
+  directorBookings: Booking[];
+  mainPendingBookings: Booking[];
+  directorPendingBookings: Booking[];
+  mainCount: number;
+  directorCount: number;
+  mainPendingCount: number;
+  directorPendingCount: number;
+  totalCount: number;
+  totalPendingCount: number;
+}
+
+export function getDaysInMonth(year: number, monthIndex: number): number {
+  return new Date(year, monthIndex + 1, 0).getDate();
+}
+
+export function buildMonthGridCells(
+  year: number,
+  monthIndex: number,
+  bookings: Booking[],
+  searchQuery = ''
+): MonthDaySummary[] {
+  const q = searchQuery.trim().toLowerCase();
+  const activeBookings = bookings.filter((b) => !isBookingRejected(b));
+  const filtered = q
+    ? activeBookings.filter(
+        (b) =>
+          b.title.toLowerCase().includes(q) ||
+          b.organizer.toLowerCase().includes(q)
+      )
+    : activeBookings;
+
+  const byDate = new Map<string, Booking[]>();
+  for (const b of filtered) {
+    const list = byDate.get(b.date);
+    if (list) {
+      list.push(b);
+    } else {
+      byDate.set(b.date, [b]);
+    }
+  }
+
+  const firstDayOfWeek = new Date(year, monthIndex, 1).getDay(); // 0=Sun..6=Sat
+  const daysInMonth = getDaysInMonth(year, monthIndex);
+  const totalCells = Math.ceil((firstDayOfWeek + daysInMonth) / 7) * 7;
+
+  const cells: MonthDaySummary[] = [];
+
+  for (let i = 0; i < totalCells; i++) {
+    const dayOffset = i - firstDayOfWeek + 1;
+    const cellDate = new Date(year, monthIndex, dayOffset);
+    const dateISO = formatDateISO(cellDate);
+    const inCurrentMonth =
+      cellDate.getFullYear() === year && cellDate.getMonth() === monthIndex;
+
+    const dayBookings = sortBookingsByTime(byDate.get(dateISO) ?? []);
+    const mainBookings = dayBookings.filter(
+      (b) => b.roomId === 'main-meeting' && isBookingApproved(b)
+    );
+    const directorBookings = dayBookings.filter(
+      (b) => b.roomId === 'director-room' && isBookingApproved(b)
+    );
+    const mainPendingBookings = dayBookings.filter(
+      (b) => b.roomId === 'main-meeting' && isBookingPending(b)
+    );
+    const directorPendingBookings = dayBookings.filter(
+      (b) => b.roomId === 'director-room' && isBookingPending(b)
+    );
+
+    cells.push({
+      dateISO,
+      dayOfMonth: cellDate.getDate(),
+      inCurrentMonth,
+      mainBookings,
+      directorBookings,
+      mainPendingBookings,
+      directorPendingBookings,
+      mainCount: mainBookings.length,
+      directorCount: directorBookings.length,
+      mainPendingCount: mainPendingBookings.length,
+      directorPendingCount: directorPendingBookings.length,
+      totalCount: mainBookings.length + directorBookings.length,
+      totalPendingCount:
+        mainPendingBookings.length + directorPendingBookings.length,
+    });
+  }
+
+  return cells;
 }

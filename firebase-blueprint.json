@@ -2,7 +2,7 @@
   "entities": {
     "Booking": {
       "title": "Booking",
-      "description": "A scheduled meeting room reservation for Main Meeting Room or Director's Room.",
+      "description": "A meeting room reservation or pending request for Main Meeting Room or Director's Room.",
       "type": "object",
       "properties": {
         "roomId": {
@@ -48,17 +48,39 @@
           "maxLength": 200,
           "description": "Optional meeting agenda or AV notes."
         },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "approved", "rejected"],
+          "description": "Approval state of the booking request."
+        },
+        "createdByType": {
+          "type": "string",
+          "enum": ["guest", "admin"],
+          "description": "Whether the booking was requested by a guest or created by admin."
+        },
         "createdByUid": {
           "type": "string",
           "minLength": 1,
           "maxLength": 128,
           "pattern": "^[a-zA-Z0-9_\\-]+$",
-          "description": "Firebase Auth UID of the user who created the booking."
+          "description": "Optional Firebase Auth UID when created by a signed-in admin."
         },
         "createdAt": {
           "type": "string",
           "format": "date-time",
-          "description": "Server timestamp when the booking was created."
+          "description": "Server timestamp when the request or booking was created."
+        },
+        "reviewedByUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID of the admin who approved or declined the request."
+        },
+        "reviewedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the request was approved or declined."
         }
       },
       "required": [
@@ -68,18 +90,25 @@
         "date",
         "startTime",
         "endTime",
-        "createdByUid",
+        "status",
+        "createdByType",
         "createdAt"
       ]
     },
     "RoomNotification": {
       "title": "RoomNotification",
-      "description": "Real-time booking or cancellation notification event.",
+      "description": "Real-time booking request, approval, rejection, or cancellation notification event.",
       "type": "object",
       "properties": {
         "type": {
           "type": "string",
-          "enum": ["booking:created", "booking:cancelled"],
+          "enum": [
+            "booking:requested",
+            "booking:created",
+            "booking:approved",
+            "booking:rejected",
+            "booking:cancelled"
+          ],
           "description": "Notification event kind."
         },
         "roomId": {
@@ -133,12 +162,10 @@
           "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
           "description": "End time in 24-hour HH:MM format."
         },
-        "actorUid": {
+        "actorType": {
           "type": "string",
-          "minLength": 1,
-          "maxLength": 128,
-          "pattern": "^[a-zA-Z0-9_\\-]+$",
-          "description": "Firebase Auth UID of the user who triggered the event."
+          "enum": ["guest", "admin"],
+          "description": "Whether the event was triggered by a guest or admin."
         },
         "timestamp": {
           "type": "string",
@@ -156,7 +183,7 @@
         "date",
         "startTime",
         "endTime",
-        "actorUid",
+        "actorType",
         "timestamp"
       ]
     },
@@ -174,7 +201,7 @@
           "minLength": 1,
           "maxLength": 128,
           "pattern": "^[a-zA-Z0-9_\\-]+$",
-          "description": "UID of the first authenticated user that seeded the office state."
+          "description": "UID of the admin that seeded the office state."
         },
         "seededAt": {
           "type": "string",
@@ -206,11 +233,11 @@
   "firestore": {
     "/bookings/{bookingId}": {
       "schema": { "$ref": "#/entities/Booking" },
-      "description": "Office room bookings for Main Meeting Room and Director's Room."
+      "description": "Office room bookings and pending requests for Main Meeting Room and Director's Room."
     },
     "/notifications/{notificationId}": {
       "schema": { "$ref": "#/entities/RoomNotification" },
-      "description": "Real-time booking and cancellation notification events."
+      "description": "Real-time booking request, approval, rejection, and cancellation notification events."
     },
     "/appMeta/{metaId}": {
       "schema": { "$ref": "#/entities/AppSeedMeta" },

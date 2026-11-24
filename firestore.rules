@@ -47,13 +47,20 @@ service cloud.firestore {
       return t is string && t.size() == 5 && t.matches('^([01]\\d|2[0-3]):[0-5]\\d$');
     }
 
+    function isValidStatus(s) {
+      return s is string && s in ['pending', 'approved', 'rejected'];
+    }
+
     // --- Validation Blueprints ---
-    function isValidBooking(data) {
+    function isValidBookingShape(data) {
       return data.keys().hasAll([
-          'roomId', 'title', 'organizer', 'date', 'startTime', 'endTime', 'createdByUid', 'createdAt'
+          'roomId', 'title', 'organizer', 'date', 'startTime', 'endTime',
+          'status', 'createdByType', 'createdAt'
         ])
         && data.keys().hasOnly([
-          'roomId', 'title', 'organizer', 'date', 'startTime', 'endTime', 'notes', 'createdByUid', 'createdAt'
+          'roomId', 'title', 'organizer', 'date', 'startTime', 'endTime',
+          'notes', 'status', 'createdByType', 'createdByUid', 'createdAt',
+          'reviewedByUid', 'reviewedAt'
         ])
         && isValidRoom(data.roomId)
         && data.title is string && data.title.size() >= 1 && data.title.size() <= 80
@@ -63,20 +70,28 @@ service cloud.firestore {
         && isValidTime(data.endTime)
         && data.startTime < data.endTime
         && (!data.keys().hasAny(['notes']) || (data.notes is string && data.notes.size() <= 200))
-        && isValidId(data.createdByUid)
-        && data.createdAt == request.time;
+        && isValidStatus(data.status)
+        && data.createdByType is string && data.createdByType in ['guest', 'admin']
+        && (!data.keys().hasAny(['createdByUid']) || isValidId(data.createdByUid))
+        && (!data.keys().hasAny(['reviewedByUid']) || isValidId(data.reviewedByUid));
     }
 
     function isValidNotification(data) {
       return data.keys().hasAll([
           'type', 'roomId', 'roomName', 'bookingId', 'title', 'organizer',
-          'date', 'startTime', 'endTime', 'actorUid', 'timestamp'
+          'date', 'startTime', 'endTime', 'actorType', 'timestamp'
         ])
         && data.keys().hasOnly([
           'type', 'roomId', 'roomName', 'bookingId', 'title', 'organizer',
-          'date', 'startTime', 'endTime', 'actorUid', 'timestamp'
+          'date', 'startTime', 'endTime', 'actorType', 'timestamp'
         ])
-        && data.type is string && (data.type == 'booking:created' || data.type == 'booking:cancelled')
+        && data.type is string && data.type in [
+          'booking:requested',
+          'booking:created',
+          'booking:approved',
+          'booking:rejected',
+          'booking:cancelled'
+        ]
         && isValidRoom(data.roomId)
         && data.roomName is string && data.roomName.size() >= 1 && data.roomName.size() <= 40
         && isValidId(data.bookingId)
@@ -85,7 +100,7 @@ service cloud.firestore {
         && isValidDate(data.date)
         && isValidTime(data.startTime)
         && isValidTime(data.endTime)
-        && isValidId(data.actorUid)
+        && data.actorType is string && data.actorType in ['guest', 'admin']
         && data.timestamp == request.time;
     }
 
@@ -107,56 +122,113 @@ service cloud.firestore {
 
     // --- Collection Rules ---
 
-    // Bookings for Main Meeting Room and Director's Room
+    // Bookings & Pending Meeting Requests (Publicly viewable; guest requests create 'pending'; only Admin approves/rejects/deletes)
     match /bookings/{bookingId} {
-      allow get: if isVerifiedUser() && isValidId(bookingId) && isValidRoom(existing().roomId);
-      allow list: if isVerifiedUser() && isValidRoom(existing().roomId);
+      allow get: if isValidId(bookingId) && isValidRoom(existing().roomId);
+      allow list: if isValidRoom(existing().roomId);
 
-      allow create: if isVerifiedUser()
+      allow create: if isValidId(bookingId)
+        && isValidBookingShape(incoming())
+        && incoming().createdAt == request.time
+        && !incoming().keys().hasAny(['reviewedByUid', 'reviewedAt'])
+        && (
+          (
+            incoming().status == 'pending'
+            && incoming().createdByType == 'guest'
+            && !incoming().keys().hasAny(['createdByUid'])
+            && existsAfter(/databases/$(database)/documents/notifications/$(bookingId + '_requested'))
+          )
+          ||
+          (
+            isAdmin()
+            && incoming().status == 'approved'
+            && incoming().createdByType == 'admin'
+            && incoming().createdByUid == request.auth.uid
+            && existsAfter(/databases/$(database)/documents/notifications/$(bookingId + '_created'))
+          )
+        );
+
+      allow update: if isAdmin()
         && isValidId(bookingId)
-        && isValidBooking(incoming())
-        && incoming().createdByUid == request.auth.uid
-        && existsAfter(/databases/$(database)/documents/notifications/$(bookingId + '_created'));
+        && isValidBookingShape(incoming())
+        && existing().status == 'pending'
+        && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'reviewedByUid', 'reviewedAt'])
+        && incoming().createdAt == existing().createdAt
+        && incoming().reviewedByUid == request.auth.uid
+        && incoming().reviewedAt == request.time
+        && (
+          (
+            incoming().status == 'approved'
+            && existsAfter(/databases/$(database)/documents/notifications/$(bookingId + '_approved'))
+          )
+          ||
+          (
+            incoming().status == 'rejected'
+            && existsAfter(/databases/$(database)/documents/notifications/$(bookingId + '_rejected'))
+          )
+        );
 
-      allow update: if false;
-
-      allow delete: if isVerifiedUser()
+      allow delete: if isAdmin()
         && isValidId(bookingId)
-        && (existing().createdByUid == request.auth.uid || isAdmin())
         && existsAfter(/databases/$(database)/documents/notifications/$(bookingId + '_cancelled'));
     }
 
-    // Real-time Booking & Cancellation Notifications
+    // Real-time Notifications
     match /notifications/{notificationId} {
-      allow get: if isVerifiedUser() && isValidId(notificationId) && isValidRoom(existing().roomId);
-      allow list: if isVerifiedUser() && isValidRoom(existing().roomId);
+      allow get: if isValidId(notificationId) && isValidRoom(existing().roomId);
+      allow list: if isValidRoom(existing().roomId);
 
-      allow create: if isVerifiedUser()
-        && isValidId(notificationId)
+      allow create: if isValidId(notificationId)
         && isValidNotification(incoming())
-        && incoming().actorUid == request.auth.uid
         && (
-          (incoming().type == 'booking:created'
-            && notificationId == incoming().bookingId + '_created'
-            && existsAfter(/databases/$(database)/documents/bookings/$(incoming().bookingId)))
+          (
+            incoming().type == 'booking:requested'
+            && incoming().actorType == 'guest'
+            && notificationId == incoming().bookingId + '_requested'
+            && getAfter(/databases/$(database)/documents/bookings/$(incoming().bookingId)).data.status == 'pending'
+          )
           ||
-          (incoming().type == 'booking:cancelled'
-            && notificationId == incoming().bookingId + '_cancelled'
-            && !existsAfter(/databases/$(database)/documents/bookings/$(incoming().bookingId)))
+          (
+            isAdmin()
+            && incoming().actorType == 'admin'
+            && (
+              (
+                incoming().type == 'booking:created'
+                && notificationId == incoming().bookingId + '_created'
+                && getAfter(/databases/$(database)/documents/bookings/$(incoming().bookingId)).data.status == 'approved'
+              )
+              ||
+              (
+                incoming().type == 'booking:approved'
+                && notificationId == incoming().bookingId + '_approved'
+                && getAfter(/databases/$(database)/documents/bookings/$(incoming().bookingId)).data.status == 'approved'
+              )
+              ||
+              (
+                incoming().type == 'booking:rejected'
+                && notificationId == incoming().bookingId + '_rejected'
+                && getAfter(/databases/$(database)/documents/bookings/$(incoming().bookingId)).data.status == 'rejected'
+              )
+              ||
+              (
+                incoming().type == 'booking:cancelled'
+                && notificationId == incoming().bookingId + '_cancelled'
+                && !existsAfter(/databases/$(database)/documents/bookings/$(incoming().bookingId))
+              )
+            )
+          )
         );
 
       allow update: if false;
 
-      allow delete: if isVerifiedUser()
-        && isValidId(notificationId)
-        && (existing().actorUid == request.auth.uid || isAdmin());
+      allow delete: if isAdmin() && isValidId(notificationId);
     }
 
     // One-time Seed Metadata
     match /appMeta/{metaId} {
-      allow get: if isVerifiedUser() && metaId == 'seed';
+      allow get: if metaId == 'seed';
       allow list: if false;
-      allow create: if isVerifiedUser()
+      allow create: if isAdmin()
         && metaId == 'seed'
         && isValidAppSeedMeta(incoming())
         && incoming().seededByUid == request.auth.uid;

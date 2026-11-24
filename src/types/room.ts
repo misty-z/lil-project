@@ -1,5 +1,9 @@
 export type RoomId = 'main-meeting' | 'director-room';
 
+export type BookingStatus = 'pending' | 'approved' | 'rejected';
+
+export type BookingActorType = 'guest' | 'admin';
+
 export interface Room {
   id: RoomId;
   name: string;
@@ -20,8 +24,12 @@ export interface Booking {
   startTime: string; // HH:MM (24h)
   endTime: string; // HH:MM (24h)
   notes?: string;
+  status?: BookingStatus;
+  createdByType?: BookingActorType;
   createdByUid?: string;
   createdAt: string; // ISO timestamp
+  reviewedByUid?: string;
+  reviewedAt?: string;
 }
 
 export interface CreateBookingInput {
@@ -34,7 +42,12 @@ export interface CreateBookingInput {
   notes?: string;
 }
 
-export type NotificationType = 'booking:created' | 'booking:cancelled';
+export type NotificationType =
+  | 'booking:requested'
+  | 'booking:created'
+  | 'booking:approved'
+  | 'booking:rejected'
+  | 'booking:cancelled';
 
 export interface NotificationEvent {
   id: string;
@@ -47,7 +60,7 @@ export interface NotificationEvent {
   date: string;
   startTime: string;
   endTime: string;
-  actorUid?: string;
+  actorType?: BookingActorType;
   timestamp: string; // ISO timestamp
   read: boolean;
 }
@@ -61,6 +74,7 @@ export interface RoomStatusInfo {
   minutesUntilFree: number | null;
   minutesUntilNext: number | null;
   todayBookings: Booking[];
+  pendingBookings: Booking[];
   bookedMinutesToday: number;
 }
 

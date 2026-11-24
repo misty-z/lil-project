@@ -5,14 +5,16 @@ import {
   CalendarCheck2,
   CalendarX2,
   CheckCheck,
+  Clock,
   Trash2,
   Volume2,
   VolumeX,
 } from 'lucide-react';
-import type { NotificationEvent } from '../types/room';
+import type { NotificationEvent, NotificationType } from '../types/room';
 
 interface NotificationsViewProps {
   notifications: NotificationEvent[];
+  isAdmin: boolean;
   soundEnabled: boolean;
   desktopAlertsEnabled: boolean;
   onToggleSound: () => void;
@@ -21,10 +23,51 @@ interface NotificationsViewProps {
   onClearAll: () => void;
 }
 
-type EventFilter = 'all' | 'booking:created' | 'booking:cancelled';
+type EventFilter = 'all' | 'requests' | 'confirmed' | 'cancelled';
+
+function getEventMeta(type: NotificationType) {
+  switch (type) {
+    case 'booking:requested':
+      return {
+        label: 'Meeting Requested',
+        colorClass: 'text-amber-700',
+        iconClass: 'text-amber-600',
+        Icon: Clock,
+      };
+    case 'booking:approved':
+      return {
+        label: 'Request Approved',
+        colorClass: 'text-emerald-700',
+        iconClass: 'text-emerald-600',
+        Icon: CalendarCheck2,
+      };
+    case 'booking:created':
+      return {
+        label: 'Room Booked',
+        colorClass: 'text-emerald-700',
+        iconClass: 'text-emerald-600',
+        Icon: CalendarCheck2,
+      };
+    case 'booking:rejected':
+      return {
+        label: 'Request Declined',
+        colorClass: 'text-red-700',
+        iconClass: 'text-red-600',
+        Icon: CalendarX2,
+      };
+    case 'booking:cancelled':
+      return {
+        label: 'Booking Cancelled',
+        colorClass: 'text-red-700',
+        iconClass: 'text-red-600',
+        Icon: CalendarX2,
+      };
+  }
+}
 
 export function NotificationsView({
   notifications,
+  isAdmin,
   soundEnabled,
   desktopAlertsEnabled,
   onToggleSound,
@@ -36,7 +79,17 @@ export function NotificationsView({
 
   const filtered = useMemo(() => {
     if (filter === 'all') return notifications;
-    return notifications.filter((n) => n.type === filter);
+    if (filter === 'requests') {
+      return notifications.filter((n) => n.type === 'booking:requested');
+    }
+    if (filter === 'confirmed') {
+      return notifications.filter(
+        (n) => n.type === 'booking:created' || n.type === 'booking:approved'
+      );
+    }
+    return notifications.filter(
+      (n) => n.type === 'booking:cancelled' || n.type === 'booking:rejected'
+    );
   }, [notifications, filter]);
 
   const unreadCount = notifications.filter((n) => !n.read).length;
@@ -49,7 +102,7 @@ export function NotificationsView({
             Real-Time Notifications
           </h1>
           <p className="mt-1 text-sm text-slate-600">
-            Live stream of room reservations and cancellations pushed across connected office displays.
+            Live stream of meeting requests, admin approvals, declined slots, and cancellations across Textile 308.
           </p>
         </div>
 
@@ -86,7 +139,7 @@ export function NotificationsView({
 
       {/* Filter & Actions Bar */}
       <div className="bg-white border border-slate-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-lg self-start">
+        <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-lg self-start flex-wrap">
           <button
             type="button"
             onClick={() => setFilter('all')}
@@ -100,25 +153,36 @@ export function NotificationsView({
           </button>
           <button
             type="button"
-            onClick={() => setFilter('booking:created')}
+            onClick={() => setFilter('requests')}
             className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap ${
-              filter === 'booking:created'
+              filter === 'requests'
                 ? 'bg-white text-slate-900 shadow-sm'
                 : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            Bookings
+            Requests
           </button>
           <button
             type="button"
-            onClick={() => setFilter('booking:cancelled')}
+            onClick={() => setFilter('confirmed')}
             className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap ${
-              filter === 'booking:cancelled'
+              filter === 'confirmed'
                 ? 'bg-white text-slate-900 shadow-sm'
                 : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            Cancellations
+            Approved &amp; Booked
+          </button>
+          <button
+            type="button"
+            onClick={() => setFilter('cancelled')}
+            className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap ${
+              filter === 'cancelled'
+                ? 'bg-white text-slate-900 shadow-sm'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            Declined &amp; Cancelled
           </button>
         </div>
 
@@ -133,7 +197,7 @@ export function NotificationsView({
               <span>Mark all read</span>
             </button>
           )}
-          {notifications.length > 0 && (
+          {isAdmin && notifications.length > 0 && (
             <button
               type="button"
               onClick={onClearAll}
@@ -154,13 +218,14 @@ export function NotificationsView({
               No notifications yet
             </p>
             <p className="mt-1 text-xs text-slate-500">
-              New bookings and cancellations will stream here automatically in real time.
+              New requests, approvals, and cancellations will stream here automatically in real time.
             </p>
           </div>
         ) : (
           <ul data-testid="notifications-list" className="divide-y divide-slate-100">
             {filtered.map((event) => {
-              const isCreated = event.type === 'booking:created';
+              const meta = getEventMeta(event.type);
+              const Icon = meta.Icon;
               const eventTime = new Date(event.timestamp).toLocaleTimeString([], {
                 hour: '2-digit',
                 minute: '2-digit',
@@ -176,26 +241,14 @@ export function NotificationsView({
                   }`}
                 >
                   <div className="flex items-start gap-3.5 min-w-0">
-                    <div
-                      className={`mt-0.5 shrink-0 ${
-                        isCreated ? 'text-emerald-600' : 'text-red-600'
-                      }`}
-                    >
-                      {isCreated ? (
-                        <CalendarCheck2 className="h-5 w-5" />
-                      ) : (
-                        <CalendarX2 className="h-5 w-5" />
-                      )}
+                    <div className={`mt-0.5 shrink-0 ${meta.iconClass}`}>
+                      <Icon className="h-5 w-5" />
                     </div>
 
                     <div className="min-w-0">
-                      <div className="flex items-center gap-2 text-xs">
-                        <span
-                          className={`font-semibold ${
-                            isCreated ? 'text-emerald-700' : 'text-red-700'
-                          }`}
-                        >
-                          {isCreated ? 'Room Booked' : 'Booking Cancelled'}
+                      <div className="flex items-center gap-2 text-xs flex-wrap">
+                        <span className={`font-semibold ${meta.colorClass}`}>
+                          {meta.label}
                         </span>
                         <span aria-hidden="true" className="text-slate-300">
                           ·

@@ -22,6 +22,7 @@ interface RoomMonitorCardProps {
   statusInfo: RoomStatusInfo;
   allBookings: Booking[];
   now: Date;
+  isAdmin: boolean;
   onOpenBookingModal: (prefill: {
     roomId: RoomId;
     date: string;
@@ -43,6 +44,7 @@ export function RoomMonitorCard({
   statusInfo,
   allBookings,
   now,
+  isAdmin,
   onOpenBookingModal,
   canCancelBooking,
   onCancelBooking,
@@ -258,7 +260,7 @@ export function RoomMonitorCard({
                 <p className="mt-1 text-sm font-medium text-slate-900">
                   {statusInfo.nextBooking
                     ? `Next: ${statusInfo.nextBooking.title} at ${statusInfo.nextBooking.startTime}`
-                    : 'No upcoming reservations today'}
+                    : 'No upcoming confirmed reservations today'}
                 </p>
               </div>
             </div>
@@ -273,7 +275,13 @@ export function RoomMonitorCard({
             >
               <CalendarPlus className="h-3.5 w-3.5" />
               <span>
-                {statusInfo.currentBooking ? 'Book Next 30m' : 'Book 30m Now'}
+                {isAdmin
+                  ? statusInfo.currentBooking
+                    ? 'Book Next 30m'
+                    : 'Book 30m Now'
+                  : statusInfo.currentBooking
+                    ? 'Request Next 30m'
+                    : 'Request 30m Now'}
               </span>
             </button>
             <button
@@ -281,7 +289,15 @@ export function RoomMonitorCard({
               onClick={() => handleQuickPrefill(60)}
               className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-slate-200 bg-white text-slate-700 text-xs font-medium hover:bg-slate-50 transition-colors whitespace-nowrap focus-visible:outline-2 focus-visible:outline-blue-600"
             >
-              <span>{statusInfo.currentBooking ? 'Book Next 60m' : 'Book 60m Now'}</span>
+              <span>
+                {isAdmin
+                  ? statusInfo.currentBooking
+                    ? 'Book Next 60m'
+                    : 'Book 60m Now'
+                  : statusInfo.currentBooking
+                    ? 'Request Next 60m'
+                    : 'Request 60m Now'}
+              </span>
             </button>
           </div>
         </div>
@@ -299,13 +315,13 @@ export function RoomMonitorCard({
                 key={hour}
                 type="button"
                 onClick={() => handleTimelineHourClick(hour)}
-                aria-label={`Book ${room.name} starting at ${String(hour).padStart(2, '0')}:00`}
-                title={`Click to book ${room.name} at ${String(hour).padStart(2, '0')}:00`}
+                aria-label={`Request ${room.name} starting at ${String(hour).padStart(2, '0')}:00`}
+                title={`Click to request ${room.name} at ${String(hour).padStart(2, '0')}:00`}
                 className="flex-1 h-full border-r last:border-r-0 border-slate-200/80 hover:bg-blue-50 transition-colors focus-visible:outline-2 focus-visible:outline-blue-600"
               />
             ))}
 
-            {/* Booked Blocks Overlay */}
+            {/* Approved Booked Blocks Overlay */}
             {statusInfo.todayBookings.map((b) => {
               const s = parseTimeToMinutes(b.startTime);
               const e = parseTimeToMinutes(b.endTime);
@@ -353,20 +369,23 @@ export function RoomMonitorCard({
           </div>
         </div>
 
-        {/* Today's Reservations List */}
+        {/* Today's Confirmed Reservations List */}
         <div className="border-t border-slate-100 pt-4">
           <div className="flex items-center justify-between mb-3">
             <h3 className="text-xs font-semibold text-slate-700">
-              Today&apos;s Bookings
+              Today&apos;s Confirmed Bookings
             </h3>
             <span className="font-mono tabular-nums text-xs text-slate-500">
               {statusInfo.todayBookings.length} scheduled
+              {statusInfo.pendingBookings.length > 0
+                ? ` · ${statusInfo.pendingBookings.length} pending`
+                : ''}
             </span>
           </div>
 
           {statusInfo.todayBookings.length === 0 ? (
             <p className="text-xs text-slate-500 py-2">
-              No bookings scheduled for today. Select a slot above to reserve this room.
+              No confirmed bookings for today. Select a time slot above to request this room.
             </p>
           ) : (
             <ul className="divide-y divide-slate-100">

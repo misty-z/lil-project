@@ -7,6 +7,7 @@ interface RoomsDirectoryViewProps {
   rooms: Room[];
   roomStatuses: Record<RoomId, RoomStatusInfo>;
   now: Date;
+  isAdmin: boolean;
   onOpenBookingModal: (prefill: {
     roomId: RoomId;
     date: string;
@@ -19,6 +20,7 @@ export function RoomsDirectoryView({
   rooms,
   roomStatuses,
   now,
+  isAdmin,
   onOpenBookingModal,
 }: RoomsDirectoryViewProps) {
   const [failedImages, setFailedImages] = useState<Record<string, boolean>>({});
@@ -136,7 +138,7 @@ export function RoomsDirectoryView({
                     className="inline-flex h-9 items-center gap-1.5 px-3.5 rounded-lg bg-slate-900 text-white text-xs font-medium hover:bg-slate-800 whitespace-nowrap"
                   >
                     <CalendarPlus className="h-3.5 w-3.5" />
-                    <span>Reserve Room</span>
+                    <span>{isAdmin ? 'Reserve Room' : 'Request Room'}</span>
                   </button>
                 </div>
               </div>

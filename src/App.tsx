@@ -1,8 +1,16 @@
 import { useMemo, useState } from 'react';
-import { Bell, CalendarCheck2, CalendarX2, RefreshCw, Volume2, VolumeX } from 'lucide-react';
-import { AuthGate } from './components/AuthGate';
+import {
+  Bell,
+  CalendarCheck2,
+  CalendarX2,
+  Clock,
+  RefreshCw,
+  Volume2,
+  VolumeX,
+} from 'lucide-react';
 import { BookingModal } from './components/BookingModal';
 import { NotificationsView } from './components/NotificationsView';
+import { PendingRequestsPanel } from './components/PendingRequestsPanel';
 import { RoomMonitorCard } from './components/RoomMonitorCard';
 import { RoomsDirectoryView } from './components/RoomsDirectoryView';
 import { ScheduleView } from './components/ScheduleView';
@@ -10,23 +18,65 @@ import { Sidebar, type NavView } from './components/Sidebar';
 import { ToastStack } from './components/ToastStack';
 import { TopBar } from './components/TopBar';
 import { useRoomMonitor } from './hooks/useRoomMonitor';
-import type { RoomId, RoomStatusInfo } from './types/room';
+import type { NotificationType, RoomId, RoomStatusInfo } from './types/room';
 import {
   computeRoomStatus,
   findNextAvailableSlot,
   formatDateISO,
+  isBookingApproved,
 } from './utils/bookingRules';
+
+function getActivityMeta(type: NotificationType) {
+  switch (type) {
+    case 'booking:requested':
+      return {
+        label: 'Requested',
+        colorClass: 'text-amber-700',
+        iconClass: 'text-amber-600',
+        Icon: Clock,
+      };
+    case 'booking:approved':
+      return {
+        label: 'Approved',
+        colorClass: 'text-emerald-700',
+        iconClass: 'text-emerald-600',
+        Icon: CalendarCheck2,
+      };
+    case 'booking:created':
+      return {
+        label: 'Booked',
+        colorClass: 'text-emerald-700',
+        iconClass: 'text-emerald-600',
+        Icon: CalendarCheck2,
+      };
+    case 'booking:rejected':
+      return {
+        label: 'Declined',
+        colorClass: 'text-red-700',
+        iconClass: 'text-red-600',
+        Icon: CalendarX2,
+      };
+    case 'booking:cancelled':
+      return {
+        label: 'Cancelled',
+        colorClass: 'text-red-700',
+        iconClass: 'text-red-600',
+        Icon: CalendarX2,
+      };
+  }
+}
 
 export default function App() {
   const {
     user,
-    authReady,
+    isAdmin,
     isSigningIn,
     authError,
     signInWithGoogle,
     signOutUser,
     rooms,
     bookings,
+    pendingRequests,
     notifications,
     unreadCount,
     toasts,
@@ -41,6 +91,8 @@ export default function App() {
     dismissToast,
     canCancelBooking,
     createBooking,
+    approveBooking,
+    rejectBooking,
     cancelBooking,
     markAllNotificationsRead,
     clearAllNotifications,
@@ -75,9 +127,9 @@ export default function App() {
     return rooms.filter((r) => roomStatuses[r.id]?.status !== 'occupied').length;
   }, [rooms, roomStatuses]);
 
-  const totalTodayBookings = useMemo(() => {
+  const totalTodayConfirmed = useMemo(() => {
     const todayISO = formatDateISO(now);
-    return bookings.filter((b) => b.date === todayISO).length;
+    return bookings.filter((b) => b.date === todayISO && isBookingApproved(b)).length;
   }, [bookings, now]);
 
   const openDefaultBookingModal = () => {
@@ -113,24 +165,6 @@ export default function App() {
     }
   };
 
-  if (!authReady) {
-    return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
-        <p className="text-sm font-medium text-slate-500">Connecting to Textile 308...</p>
-      </div>
-    );
-  }
-
-  if (!user) {
-    return (
-      <AuthGate
-        onSignIn={signInWithGoogle}
-        authError={authError}
-        isSigningIn={isSigningIn}
-      />
-    );
-  }
-
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 flex">
       <Sidebar
@@ -142,10 +176,15 @@ export default function App() {
           }
         }}
         unreadCount={unreadCount}
+        pendingCount={pendingRequests.length}
         connectionState={connectionState}
         availableRoomCount={availableRoomCount}
         totalRoomCount={rooms.length}
-        userName={user.displayName || user.email}
+        user={user}
+        isAdmin={isAdmin}
+        isSigningIn={isSigningIn}
+        authError={authError}
+        onSignIn={signInWithGoogle}
         onSignOut={signOutUser}
         mobileOpen={mobileNavOpen}
         onCloseMobile={() => setMobileNavOpen(false)}
@@ -156,6 +195,7 @@ export default function App() {
           activeView={activeView}
           now={now}
           unreadCount={unreadCount}
+          isAdmin={isAdmin}
           onOpenMobileNav={() => setMobileNavOpen(true)}
           onOpenNotifications={handleOpenNotifications}
           onOpenBookModal={openDefaultBookingModal}
@@ -196,7 +236,7 @@ export default function App() {
                         Live Room Availability
                       </h1>
                       <p className="mt-1 text-sm text-slate-600">
-                        Monitoring Main Meeting Room and Director&apos;s Room with real-time booking and cancellation alerts.
+                        Textile 308 real-time schedule for Main Meeting Room and Director&apos;s Room. Anyone can check availability and submit a meeting request for admin approval.
                       </p>
                     </div>
 
@@ -234,12 +274,14 @@ export default function App() {
                     </div>
 
                     <div className="p-4">
-                      <p className="text-xs font-medium text-slate-500">Scheduled Today</p>
+                      <p className="text-xs font-medium text-slate-500">Confirmed Today</p>
                       <p className="mt-1 text-2xl font-bold font-mono tabular-nums text-slate-900">
-                        {totalTodayBookings}
+                        {totalTodayConfirmed}
                       </p>
                       <p className="mt-0.5 text-xs text-slate-500">
-                        Reservations across both spaces
+                        {pendingRequests.length > 0
+                          ? `${pendingRequests.length} pending admin approval`
+                          : 'Approved reservations across both spaces'}
                       </p>
                     </div>
 
@@ -250,7 +292,7 @@ export default function App() {
                       </p>
                       <p className="mt-0.5 text-xs text-slate-500">
                         {unreadCount > 0
-                          ? `${unreadCount} unread booking updates`
+                          ? `${unreadCount} unread updates`
                           : 'All activity acknowledged'}
                       </p>
                     </div>
@@ -265,12 +307,23 @@ export default function App() {
                         statusInfo={roomStatuses[room.id]}
                         allBookings={bookings}
                         now={now}
+                        isAdmin={isAdmin}
                         onOpenBookingModal={openPrefilledBookingModal}
                         canCancelBooking={canCancelBooking}
                         onCancelBooking={cancelBooking}
                       />
                     ))}
                   </div>
+
+                  {/* Pending Meeting Approval Queue */}
+                  <PendingRequestsPanel
+                    pendingRequests={pendingRequests}
+                    isAdmin={isAdmin}
+                    isSigningIn={isSigningIn}
+                    onSignIn={signInWithGoogle}
+                    onApprove={approveBooking}
+                    onReject={rejectBooking}
+                  />
 
                   {/* Recent Real-Time Activity Strip */}
                   <section
@@ -284,7 +337,7 @@ export default function App() {
                           id="recent-activity-heading"
                           className="text-sm font-semibold text-slate-900"
                         >
-                          Recent Booking &amp; Cancellation Alerts
+                          Recent Room Activity &amp; Alerts
                         </h2>
                       </div>
                       <button
@@ -303,7 +356,8 @@ export default function App() {
                     ) : (
                       <ul className="divide-y divide-slate-100">
                         {notifications.slice(0, 5).map((event) => {
-                          const isCreated = event.type === 'booking:created';
+                          const meta = getActivityMeta(event.type);
+                          const Icon = meta.Icon;
                           const eventTime = new Date(event.timestamp).toLocaleTimeString(
                             [],
                             {
@@ -318,18 +372,10 @@ export default function App() {
                               className="px-6 py-3 flex items-center justify-between gap-4 text-sm"
                             >
                               <div className="flex items-center gap-3 min-w-0">
-                                {isCreated ? (
-                                  <CalendarCheck2 className="h-4 w-4 text-emerald-600 shrink-0" />
-                                ) : (
-                                  <CalendarX2 className="h-4 w-4 text-red-600 shrink-0" />
-                                )}
+                                <Icon className={`h-4 w-4 shrink-0 ${meta.iconClass}`} />
                                 <p className="truncate text-slate-700">
-                                  <span
-                                    className={`font-semibold ${
-                                      isCreated ? 'text-emerald-700' : 'text-red-700'
-                                    }`}
-                                  >
-                                    {isCreated ? 'Booked' : 'Cancelled'}
+                                  <span className={`font-semibold ${meta.colorClass}`}>
+                                    {meta.label}
                                   </span>
                                   <span aria-hidden="true"> · </span>
                                   <span className="font-medium text-slate-900">
@@ -360,8 +406,11 @@ export default function App() {
                   rooms={rooms}
                   bookings={bookings}
                   now={now}
+                  isAdmin={isAdmin}
                   onOpenBookingModal={openPrefilledBookingModal}
                   canCancelBooking={canCancelBooking}
+                  onApproveBooking={approveBooking}
+                  onRejectBooking={rejectBooking}
                   onCancelBooking={cancelBooking}
                 />
               )}
@@ -369,6 +418,7 @@ export default function App() {
               {activeView === 'notifications' && (
                 <NotificationsView
                   notifications={notifications}
+                  isAdmin={isAdmin}
                   soundEnabled={soundEnabled}
                   desktopAlertsEnabled={desktopAlertsEnabled}
                   onToggleSound={toggleSound}
@@ -383,6 +433,7 @@ export default function App() {
                   rooms={rooms}
                   roomStatuses={roomStatuses}
                   now={now}
+                  isAdmin={isAdmin}
                   onOpenBookingModal={openPrefilledBookingModal}
                 />
               )}
@@ -396,8 +447,9 @@ export default function App() {
         rooms={rooms}
         bookings={bookings}
         now={now}
+        isAdmin={isAdmin}
         initialValues={modalInitialValues}
-        defaultOrganizer={user.displayName || ''}
+        defaultOrganizer={user?.displayName || ''}
         onClose={() => setModalOpen(false)}
         onSubmit={createBooking}
       />

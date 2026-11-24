@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  buildMonthGridCells,
+  canApproveBooking,
   computeRoomStatus,
   createInitialSeedBookings,
   doIntervalsOverlap,
@@ -43,6 +45,29 @@ test('validateBookingInput enforces required fields and room conflicts', () => {
       date: '2026-11-23',
       startTime: '10:00',
       endTime: '11:00',
+      status: 'approved',
+      createdAt: '2026-11-23T08:00:00.000Z',
+    },
+    {
+      id: 'b2',
+      roomId: 'main-meeting',
+      title: 'Pending Pitch',
+      organizer: 'Guest',
+      date: '2026-11-23',
+      startTime: '14:00',
+      endTime: '15:00',
+      status: 'pending',
+      createdAt: '2026-11-23T08:00:00.000Z',
+    },
+    {
+      id: 'b3',
+      roomId: 'main-meeting',
+      title: 'Declined Review',
+      organizer: 'Guest',
+      date: '2026-11-23',
+      startTime: '16:00',
+      endTime: '17:00',
+      status: 'rejected',
       createdAt: '2026-11-23T08:00:00.000Z',
     },
   ];
@@ -62,7 +87,7 @@ test('validateBookingInput enforces required fields and room conflicts', () => {
   assert.equal(missingTitle.valid, false);
   assert.ok(missingTitle.fieldErrors?.title);
 
-  // Overlapping in same room
+  // Overlapping with approved booking in same room is blocked
   const conflict = validateBookingInput(
     {
       roomId: 'main-meeting',
@@ -76,6 +101,33 @@ test('validateBookingInput enforces required fields and room conflicts', () => {
   );
   assert.equal(conflict.valid, false);
   assert.equal(conflict.isConflict, true);
+
+  // Pending or rejected requests do not lock slots until approved
+  const overPending = validateBookingInput(
+    {
+      roomId: 'main-meeting',
+      title: 'Alternative Sync',
+      organizer: 'Alex',
+      date: '2026-11-23',
+      startTime: '14:00',
+      endTime: '15:00',
+    },
+    existing
+  );
+  assert.equal(overPending.valid, true);
+
+  const overRejected = validateBookingInput(
+    {
+      roomId: 'main-meeting',
+      title: 'Evening Sync',
+      organizer: 'Alex',
+      date: '2026-11-23',
+      startTime: '16:00',
+      endTime: '17:00',
+    },
+    existing
+  );
+  assert.equal(overRejected.valid, true);
 
   // Same time in Director's Room is allowed
   const otherRoom = validateBookingInput(
@@ -106,7 +158,48 @@ test('validateBookingInput enforces required fields and room conflicts', () => {
   assert.equal(adjacent.valid, true);
 });
 
-test('computeRoomStatus classifies occupied, upcoming_soon, and available', () => {
+test('canApproveBooking prevents approving pending requests that overlap approved bookings', () => {
+  const approved: Booking = {
+    id: 'a1',
+    roomId: 'director-room',
+    title: 'Executive Board',
+    organizer: 'Elena',
+    date: '2026-11-24',
+    startTime: '10:00',
+    endTime: '11:00',
+    status: 'approved',
+    createdAt: '2026-11-23T08:00:00.000Z',
+  };
+  const conflictingPending: Booking = {
+    id: 'p1',
+    roomId: 'director-room',
+    title: 'Vendor Sync',
+    organizer: 'Budi',
+    date: '2026-11-24',
+    startTime: '10:30',
+    endTime: '11:30',
+    status: 'pending',
+    createdAt: '2026-11-23T09:00:00.000Z',
+  };
+  const clearPending: Booking = {
+    id: 'p2',
+    roomId: 'director-room',
+    title: 'Design Check-in',
+    organizer: 'Rina',
+    date: '2026-11-24',
+    startTime: '11:00',
+    endTime: '11:30',
+    status: 'pending',
+    createdAt: '2026-11-23T09:05:00.000Z',
+  };
+
+  const all = [approved, conflictingPending, clearPending];
+  assert.equal(canApproveBooking(conflictingPending, all).ok, false);
+  assert.equal(canApproveBooking(clearPending, all).ok, true);
+  assert.equal(canApproveBooking(approved, all).ok, false);
+});
+
+test('computeRoomStatus ignores pending and rejected requests for live occupancy', () => {
   const now = new Date(2026, 10, 23, 10, 15, 0); // 10:15 local
   const todayISO = formatDateISO(now);
 
@@ -119,6 +212,7 @@ test('computeRoomStatus classifies occupied, upcoming_soon, and available', () =
       date: todayISO,
       startTime: '10:00',
       endTime: '10:45',
+      status: 'approved',
       createdAt: now.toISOString(),
     },
     {
@@ -129,6 +223,18 @@ test('computeRoomStatus classifies occupied, upcoming_soon, and available', () =
       date: todayISO,
       startTime: '10:35',
       endTime: '11:15',
+      status: 'approved',
+      createdAt: now.toISOString(),
+    },
+    {
+      id: 'd-pending',
+      roomId: 'director-room',
+      title: 'Unapproved Guest Meeting',
+      organizer: 'Guest',
+      date: todayISO,
+      startTime: '10:00',
+      endTime: '10:30',
+      status: 'pending',
       createdAt: now.toISOString(),
     },
   ];
@@ -142,6 +248,7 @@ test('computeRoomStatus classifies occupied, upcoming_soon, and available', () =
   assert.equal(dirStatus.status, 'upcoming_soon');
   assert.equal(dirStatus.minutesUntilNext, 20);
   assert.equal(dirStatus.nextBooking?.id, 'd1');
+  assert.equal(dirStatus.pendingBookings.length, 1);
 
   const laterNow = new Date(2026, 10, 23, 12, 0, 0);
   const freeStatus = computeRoomStatus('director-room', bookings, laterNow);
@@ -150,7 +257,7 @@ test('computeRoomStatus classifies occupied, upcoming_soon, and available', () =
   assert.equal(freeStatus.nextBooking, null);
 });
 
-test('findNextAvailableSlot skips busy intervals cleanly', () => {
+test('findNextAvailableSlot skips busy approved intervals cleanly', () => {
   const now = new Date(2026, 10, 23, 9, 50, 0);
   const todayISO = formatDateISO(now);
   const bookings: Booking[] = [
@@ -162,6 +269,7 @@ test('findNextAvailableSlot skips busy intervals cleanly', () => {
       date: todayISO,
       startTime: '09:45',
       endTime: '10:30',
+      status: 'approved',
       createdAt: now.toISOString(),
     },
   ];
@@ -223,4 +331,87 @@ test('Director Room has max 4 seats and formats capacity cleanly', () => {
   assert.equal(directorRoom.capacity, 4);
   assert.equal(formatRoomCapacity(mainRoom), '10 seats');
   assert.equal(formatRoomCapacity(directorRoom), 'Max 4 seats');
+});
+
+test('buildMonthGridCells tracks approved and pending counts while excluding rejected requests', () => {
+  const sampleBookings: Booking[] = [
+    {
+      id: 'b1',
+      roomId: 'main-meeting',
+      title: 'Monthly Kickoff',
+      organizer: 'Sarah',
+      date: '2026-11-23',
+      startTime: '09:00',
+      endTime: '10:00',
+      status: 'approved',
+      createdAt: '2026-11-01T08:00:00.000Z',
+    },
+    {
+      id: 'b2',
+      roomId: 'director-room',
+      title: 'Board Review',
+      organizer: 'Elena',
+      date: '2026-11-23',
+      startTime: '14:00',
+      endTime: '15:00',
+      status: 'approved',
+      createdAt: '2026-11-01T08:00:00.000Z',
+    },
+    {
+      id: 'b3',
+      roomId: 'main-meeting',
+      title: 'Sprint Demo',
+      organizer: 'Marcus',
+      date: '2026-11-10',
+      startTime: '11:00',
+      endTime: '12:00',
+      status: 'approved',
+      createdAt: '2026-11-01T08:00:00.000Z',
+    },
+    {
+      id: 'b4',
+      roomId: 'director-room',
+      title: 'Guest Briefing',
+      organizer: 'Budi',
+      date: '2026-11-10',
+      startTime: '15:00',
+      endTime: '16:00',
+      status: 'pending',
+      createdAt: '2026-11-01T08:00:00.000Z',
+    },
+    {
+      id: 'b5',
+      roomId: 'main-meeting',
+      title: 'Declined Sync',
+      organizer: 'Guest',
+      date: '2026-11-15',
+      startTime: '15:00',
+      endTime: '16:00',
+      status: 'rejected',
+      createdAt: '2026-11-01T08:00:00.000Z',
+    },
+  ];
+
+  // November 2026 has 30 days
+  const cells = buildMonthGridCells(2026, 10, sampleBookings);
+  const inMonth = cells.filter((c) => c.inCurrentMonth);
+  assert.equal(inMonth.length, 30);
+  assert.equal(cells.length % 7, 0);
+
+  const nov10 = inMonth.find((c) => c.dateISO === '2026-11-10');
+  assert.ok(nov10);
+  assert.equal(nov10.mainCount, 1);
+  assert.equal(nov10.directorCount, 0);
+  assert.equal(nov10.directorPendingCount, 1);
+
+  const nov23 = inMonth.find((c) => c.dateISO === '2026-11-23');
+  assert.ok(nov23);
+  assert.equal(nov23.mainCount, 1);
+  assert.equal(nov23.directorCount, 1);
+
+  const nov15 = inMonth.find((c) => c.dateISO === '2026-11-15');
+  assert.ok(nov15);
+  assert.equal(nov15.mainCount, 0);
+  assert.equal(nov15.directorCount, 0);
+  assert.equal(nov15.totalPendingCount, 0);
 });

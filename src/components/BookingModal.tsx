@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { AlertCircle, X } from 'lucide-react';
+import { AlertCircle, Clock, X } from 'lucide-react';
 import type { Booking, CreateBookingInput, Room, RoomId } from '../types/room';
 import {
   findNextAvailableSlot,
@@ -14,6 +14,7 @@ interface BookingModalProps {
   rooms: Room[];
   bookings: Booking[];
   now: Date;
+  isAdmin: boolean;
   initialValues: {
     roomId: RoomId;
     date: string;
@@ -34,6 +35,7 @@ export function BookingModal({
   rooms,
   bookings,
   now,
+  isAdmin,
   initialValues,
   defaultOrganizer = '',
   onClose,
@@ -125,7 +127,7 @@ export function BookingModal({
     setIsSubmitting(false);
 
     if (!result.ok) {
-      setErrorMsg(result.error || 'Unable to complete reservation.');
+      setErrorMsg(result.error || 'Unable to complete request.');
       return;
     }
 
@@ -150,11 +152,11 @@ export function BookingModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby="booking-modal-title"
-        className="w-full max-w-lg bg-white border border-slate-200 rounded-xl shadow-xl overflow-hidden"
+        className="w-full max-w-lg bg-white border border-slate-200 rounded-xl shadow-xl overflow-hidden max-h-[92vh] overflow-y-auto"
       >
         <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between gap-4">
           <h2 id="booking-modal-title" className="text-lg font-semibold text-slate-900">
-            Reserve Meeting Room
+            {isAdmin ? 'Reserve Meeting Room' : 'Request a Meeting Room'}
           </h2>
           <button
             type="button"
@@ -167,6 +169,20 @@ export function BookingModal({
         </div>
 
         <form onSubmit={handleSubmit} noValidate className="p-6 space-y-4">
+          {!isAdmin && (
+            <div
+              data-testid="guest-approval-notice"
+              className="p-3 rounded-lg bg-amber-50 border border-amber-200 flex items-start gap-2.5 text-xs text-amber-900"
+            >
+              <Clock className="h-4 w-4 text-amber-700 shrink-0 mt-0.5" />
+              <span>
+                No account required. Your request will appear as{' '}
+                <strong className="font-semibold">Pending Approval</strong> until confirmed
+                by the office administrator.
+              </span>
+            </div>
+          )}
+
           {errorMsg && (
             <div
               role="alert"
@@ -243,7 +259,7 @@ export function BookingModal({
                 htmlFor="booking-organizer"
                 className="block text-xs font-medium text-slate-700 mb-1.5"
               >
-                Organizer
+                Organizer Name
               </label>
               <input
                 id="booking-organizer"
@@ -382,7 +398,13 @@ export function BookingModal({
               disabled={isSubmitting}
               className="h-10 px-5 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-60 transition-colors whitespace-nowrap"
             >
-              {isSubmitting ? 'Confirming...' : 'Confirm Booking'}
+              {isSubmitting
+                ? isAdmin
+                  ? 'Confirming...'
+                  : 'Submitting...'
+                : isAdmin
+                  ? 'Confirm Booking'
+                  : 'Submit Request'}
             </button>
           </div>
         </form>

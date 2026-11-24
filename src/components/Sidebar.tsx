@@ -1,4 +1,5 @@
-import { Bell, Building2, CalendarDays, LayoutGrid, LogOut, X } from 'lucide-react';
+import { Bell, Building2, CalendarDays, LayoutGrid, LogIn, LogOut, ShieldCheck, X } from 'lucide-react';
+import type { User } from 'firebase/auth';
 import type { ConnectionState } from '../hooks/useRoomMonitor';
 
 export type NavView = 'monitor' | 'schedule' | 'notifications' | 'rooms';
@@ -7,11 +8,16 @@ interface SidebarProps {
   activeView: NavView;
   onSelectView: (view: NavView) => void;
   unreadCount: number;
+  pendingCount: number;
   connectionState: ConnectionState;
   availableRoomCount: number;
   totalRoomCount: number;
-  userName?: string | null;
-  onSignOut?: () => void;
+  user: User | null;
+  isAdmin: boolean;
+  isSigningIn: boolean;
+  authError?: string | null;
+  onSignIn: () => void;
+  onSignOut: () => void;
   mobileOpen: boolean;
   onCloseMobile: () => void;
 }
@@ -22,7 +28,7 @@ const NAV_ITEMS: Array<{
   icon: typeof LayoutGrid;
 }> = [
   { id: 'monitor', label: 'Live Monitor', icon: LayoutGrid },
-  { id: 'schedule', label: 'Day Schedule', icon: CalendarDays },
+  { id: 'schedule', label: 'Month Schedule', icon: CalendarDays },
   { id: 'notifications', label: 'Notifications', icon: Bell },
   { id: 'rooms', label: 'Room Directory', icon: Building2 },
 ];
@@ -31,10 +37,15 @@ export function Sidebar({
   activeView,
   onSelectView,
   unreadCount,
+  pendingCount,
   connectionState,
   availableRoomCount,
   totalRoomCount,
-  userName,
+  user,
+  isAdmin,
+  isSigningIn,
+  authError,
+  onSignIn,
   onSignOut,
   mobileOpen,
   onCloseMobile,
@@ -87,6 +98,16 @@ export function Sidebar({
                   <Icon className={`h-4 w-4 shrink-0 ${isActive ? 'text-white' : 'text-slate-400'}`} />
                   <span>{item.label}</span>
                 </span>
+                {item.id === 'monitor' && pendingCount > 0 && (
+                  <span
+                    className={`font-mono tabular-nums text-xs font-semibold ${
+                      isActive ? 'text-amber-300' : 'text-amber-700'
+                    }`}
+                    title={`${pendingCount} pending approval`}
+                  >
+                    {pendingCount}
+                  </span>
+                )}
                 {item.id === 'notifications' && unreadCount > 0 && (
                   <span
                     className={`font-mono tabular-nums text-xs font-semibold ${
@@ -132,22 +153,57 @@ export function Sidebar({
           </span>
         </div>
 
-        {userName && onSignOut && (
-          <div className="pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
-            <span className="text-xs font-medium text-slate-700 truncate">
-              {userName}
-            </span>
-            <button
-              type="button"
-              onClick={onSignOut}
-              aria-label="Sign out"
-              className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-colors shrink-0"
-            >
-              <LogOut className="h-3.5 w-3.5" />
-              <span>Sign out</span>
-            </button>
-          </div>
-        )}
+        <div className="pt-3 border-t border-slate-100 space-y-2">
+          {user ? (
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold text-slate-800 flex items-center gap-1 truncate">
+                    {isAdmin && <ShieldCheck className="h-3.5 w-3.5 text-emerald-600 shrink-0" />}
+                    <span className="truncate">
+                      {isAdmin ? 'Admin' : 'Guest'}: {user.displayName || user.email}
+                    </span>
+                  </p>
+                  {!isAdmin && (
+                    <p className="text-[11px] text-amber-700">
+                      Meetings require admin approval
+                    </p>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={onSignOut}
+                  aria-label="Sign out"
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-colors shrink-0"
+                >
+                  <LogOut className="h-3.5 w-3.5" />
+                  <span>Sign out</span>
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <button
+                type="button"
+                onClick={onSignIn}
+                disabled={isSigningIn}
+                data-testid="sidebar-admin-signin"
+                className="w-full inline-flex items-center justify-center gap-2 h-9 px-3 rounded-lg border border-slate-200 bg-slate-50 text-xs font-medium text-slate-700 hover:bg-slate-100 hover:text-slate-900 disabled:opacity-60 transition-colors"
+              >
+                <LogIn className="h-3.5 w-3.5" />
+                <span>{isSigningIn ? 'Signing in...' : 'Admin Sign In'}</span>
+              </button>
+              <p className="text-[11px] text-slate-500 leading-snug">
+                No login needed to check schedules or request a room.
+              </p>
+              {authError && (
+                <p role="alert" className="text-[11px] text-red-600">
+                  {authError}
+                </p>
+              )}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
